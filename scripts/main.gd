@@ -785,13 +785,17 @@ func _physics_process(delta: float) -> void:
             pending_index = -1
             pending_kind = ""
     attack_cooldown = maxf(0.0, attack_cooldown - delta)
-    # Джойстик задаёт абсолютное направление движения на экране.
-    # Камера имеет фиксированный мировой ракурс и не зависит от поворота игрока.
+    # Джойстик задаёт направление относительно камеры в момент касания.
+    # Направление фиксируется до отпускания пальца, чтобы камера не закручивала траекторию.
     var direction := Vector2.ZERO
     var steering_active := joystick_touch != -1 and touch_move.length() > 0.12
     if steering_active:
-        direction = touch_move
-        # Траектория меняется сразу, модель плавно разворачивается вслед за ней.
+        direction = Vector2(
+            cos(joystick_basis_yaw) * touch_move.x + sin(joystick_basis_yaw) * touch_move.y,
+            -sin(joystick_basis_yaw) * touch_move.x + cos(joystick_basis_yaw) * touch_move.y
+        )
+        # Вперёд на джойстике означает вперёд относительно камеры, даже после разворота.
+        # Пока палец удерживается, направление не пересчитывается от вращающейся камеры.
         var desired_facing := atan2(-direction.x, -direction.y)
         player_facing = lerp_angle(player_facing, desired_facing, 1.0 - exp(-14.0 * delta))
         # Ручное управление отменяет автоподход к выбранному объекту.
@@ -913,6 +917,7 @@ func _input(event: InputEvent) -> void:
             if event.position.y > viewport_height * 0.46 and event.position.x < viewport_width * 0.46 and joystick_touch == -1:
                 joystick_touch = event.index
                 joystick_origin = event.position
+                joystick_basis_yaw = camera_yaw
                 touch_move = Vector2.ZERO
             elif event.position.y > viewport_height * 0.46 and event.position.x > viewport_width * 0.54 and gather_touch == -1:
                 gather_touch = event.index
