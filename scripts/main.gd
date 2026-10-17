@@ -11,6 +11,19 @@ var player: CharacterBody3D
 var camera: Camera3D
 var camera_distance := 17.0
 var camera_tilt := 0.68
+var camera_yaw := 0.0
+var desired_camera_yaw := 0.0
+var camera_focus := Vector3.ZERO
+var camera_initialized := false
+var player_visual: Node3D
+var player_facing := 0.0
+const FIRE_POS := Vector2(-3.0, 4.0)
+const BENCH_POS := Vector2(-3.0, 7.1)
+var campfire_node: Node3D
+var campfire_light: OmniLight3D
+var fire_flames: Array[MeshInstance3D] = []
+var sitting := false
+var camp_time := 0.0
 var obstacles: Array[Dictionary] = []
 var resources: Array[Dictionary] = []
 var drops: Array[Dictionary] = []
@@ -60,6 +73,7 @@ func _ready() -> void:
     rng.seed = 20261017
     _create_world()
     _create_tent()
+    _create_camp()
     _create_player()
     _create_camera()
     _create_resources()
@@ -133,6 +147,61 @@ func _create_tent() -> void:
     _mesh_box(tent_node, Vector3(1.1, 1.15, 0.13), Vector3(0, 0.61, 1.68), Color("473d35"))
     _mesh_box(tent_node, Vector3(0.18, 2.2, 0.18), Vector3(0, 1.13, -1.75), Color("6d4d2d"))
 
+func _create_camp() -> void:
+    # Camp placed close to spawn, deliberately away from the tent and lake.
+    campfire_node = Node3D.new()
+    campfire_node.name = "Campfire_Cauldron"
+    campfire_node.position = Vector3(FIRE_POS.x, 0, FIRE_POS.y)
+    add_child(campfire_node)
+    _mesh_sphere(campfire_node, 1.25, Vector3(0, 0.055, 0), Color("514d40"), Vector3(1.0, 0.12, 1.0))
+    for i in range(9):
+        var a := TAU * float(i) / 9.0
+        _mesh_sphere(campfire_node, 0.23, Vector3(cos(a) * 0.9, 0.16, sin(a) * 0.9), Color("8b8d87"), Vector3(1.2, 0.7, 0.8))
+    for i in range(4):
+        var log := _mesh_box(campfire_node, Vector3(1.4, 0.22, 0.24), Vector3(0, 0.24, 0), Color("67412b"))
+        log.rotation.y = float(i) * PI / 4.0
+    for i in range(3):
+        var flame := _mesh_sphere(campfire_node, 0.28, Vector3((i - 1) * 0.23, 0.72, 0), Color("ff9b29") if i != 1 else Color("ffe069"), Vector3(0.62, 1.75, 0.62))
+        var fm := flame.material_override as StandardMaterial3D
+        fm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+        fire_flames.append(flame)
+    campfire_light = OmniLight3D.new()
+    campfire_light.position = Vector3(0, 1.6, 0)
+    campfire_light.light_color = Color("ffb36a")
+    campfire_light.light_energy = 1.7
+    campfire_light.omni_range = 9.0
+    campfire_light.shadow_enabled = false
+    campfire_node.add_child(campfire_light)
+    # Iron cooking pot, supported by two wooden posts.
+    for x in [-1.15, 1.15]:
+        _mesh_box(campfire_node, Vector3(0.13, 2.0, 0.13), Vector3(x, 1.02, 0), Color("6b4c35"))
+    _mesh_box(campfire_node, Vector3(2.55, 0.13, 0.13), Vector3(0, 2.02, 0), Color("6b4c35"))
+    _mesh_box(campfire_node, Vector3(0.06, 0.56, 0.06), Vector3(0, 1.69, 0), Color("454545"))
+    _mesh_sphere(campfire_node, 0.46, Vector3(0, 1.22, 0), Color("34393b"), Vector3(1.0, 0.68, 1.0))
+    _mesh_box(campfire_node, Vector3(0.9, 0.07, 0.9), Vector3(0, 1.49, 0), Color("303436"))
+    var bench := Node3D.new()
+    bench.name = "Sit_Bench"
+    bench.position = Vector3(BENCH_POS.x, 0, BENCH_POS.y)
+    add_child(bench)
+    _mesh_box(bench, Vector3(2.7, 0.23, 0.75), Vector3(0, 0.8, 0), Color("926b46"))
+    _mesh_box(bench, Vector3(2.7, 0.8, 0.19), Vector3(0, 1.3, 0.32), Color("815b39"))
+    for x in [-1.05, 1.05]:
+        _mesh_box(bench, Vector3(0.2, 0.77, 0.2), Vector3(x, 0.37, 0), Color("65432d"))
+    # A few stepping stones lead from the tent to the fire.
+    for i in range(7):
+        var t := float(i) / 6.0
+        var pp := TENT_POS.lerp(FIRE_POS, t)
+        _mesh_sphere(self, 0.42, Vector3(pp.x, 0.035, pp.y), Color("a49576"), Vector3(1.1, 0.12, 0.75))
+
+func _animate_camp(delta: float) -> void:
+    camp_time += delta
+    for i in range(fire_flames.size()):
+        var flame := fire_flames[i]
+        flame.scale.y = 1.5 + 0.26 * sin(camp_time * 6.0 + float(i) * 2.2)
+        flame.position.y = 0.72 + 0.07 * sin(camp_time * 7.0 + float(i))
+    if campfire_light != null:
+        campfire_light.light_energy = 1.5 + 0.23 * sin(camp_time * 8.0)
+
 func _update_lighting() -> void:
     # Плавное освещение без тяжёлых эффектов постобработки.
     var phase := (day_clock - 6.0) / 24.0 * TAU
@@ -195,9 +264,11 @@ func _create_player() -> void:
     var collision := CollisionShape3D.new()
     collision.shape = capsule
     player.add_child(collision)
-    _mesh_sphere(player, 0.55, Vector3(0, 0.0, 0), Color("d7a579"), Vector3(0.8, 1.25, 0.7))
-    _mesh_sphere(player, 0.34, Vector3(0, 0.9, 0), Color("edc59b"))
-    _mesh_box(player, Vector3(0.7, 0.15, 0.18), Vector3(0, 0.5, -0.3), Color("4c7050"))
+    player_visual = Node3D.new()
+    player.add_child(player_visual)
+    _mesh_sphere(player_visual, 0.55, Vector3(0, 0.0, 0), Color("d7a579"), Vector3(0.8, 1.25, 0.7))
+    _mesh_sphere(player_visual, 0.34, Vector3(0, 0.9, 0), Color("edc59b"))
+    _mesh_box(player_visual, Vector3(0.7, 0.15, 0.18), Vector3(0, 0.5, -0.3), Color("4c7050"))
 
 func _create_camera() -> void:
     camera = Camera3D.new()
@@ -206,12 +277,19 @@ func _create_camera() -> void:
     add_child(camera)
     _position_camera()
 
-func _position_camera() -> void:
+func _position_camera(delta: float = 0.0) -> void:
     if camera == null or player == null:
         return
-    var focus := player.global_position + Vector3(0, 0.35, 0)
-    camera.global_position = focus + Vector3(0, camera_distance, camera_distance * camera_tilt)
-    camera.look_at(focus, Vector3.UP)
+    var desired_focus := player.global_position + Vector3(0, 0.35, 0)
+    if not camera_initialized:
+        camera_focus = desired_focus
+        camera_initialized = true
+    else:
+        camera_focus = camera_focus.lerp(desired_focus, 1.0 - exp(-4.0 * delta))
+    camera_yaw = lerp_angle(camera_yaw, desired_camera_yaw, 1.0 - exp(-2.2 * delta))
+    var offset := Vector3(sin(camera_yaw) * camera_distance * camera_tilt, camera_distance, cos(camera_yaw) * camera_distance * camera_tilt)
+    camera.global_position = camera_focus + offset
+    camera.look_at(camera_focus, Vector3.UP)
 
 func _is_lake(pos: Vector2, margin := 0.0) -> bool:
     return pos.distance_to(LAKE_CENTER) < LAKE_RADIUS + margin
@@ -219,7 +297,7 @@ func _is_lake(pos: Vector2, margin := 0.0) -> bool:
 func _can_place(pos: Vector2, radius: float) -> bool:
     if _is_lake(pos, radius + 0.3):
         return false
-    if pos.length() < 3.3 or pos.distance_to(TENT_POS) < radius + 3.5:
+    if pos.length() < 3.3 or pos.distance_to(TENT_POS) < radius + 3.5 or pos.distance_to(FIRE_POS) < radius + 3.2 or pos.distance_to(BENCH_POS) < radius + 2.4:
         return false
     for obstacle in obstacles:
         if pos.distance_to(obstacle["pos"]) < radius + obstacle["radius"] + 1.0:
@@ -248,14 +326,22 @@ func _create_resources() -> void:
         add_child(node)
         if kind == "tree":
             var tall := rng.randf_range(0.85, 1.4)
-            var pine := i % 4 == 0
-            _mesh_box(node, Vector3(0.55, 2.2 * tall, 0.55), Vector3(0, 1.1 * tall, 0), Color("765238"))
-            if pine:
-                _mesh_sphere(node, 1.0, Vector3(0, 2.5 * tall, 0), Color("245e3d"), Vector3(0.8, 1.55 * tall, 0.8))
-                _mesh_sphere(node, 0.73, Vector3(0, 3.35 * tall, 0), Color("307449"), Vector3(0.8, 1.15, 0.8))
-            else:
-                _mesh_sphere(node, 1.25, Vector3(0, 2.55 * tall, 0), Color("286e3f") if i % 3 else Color("47894b"), Vector3(1, 0.85 * tall, 1))
-                _mesh_sphere(node, 0.75, Vector3(0.5, 3.05 * tall, 0.1), Color("3a8850"))
+            var species := i % 4
+            var bark := Color("d8d2c3") if species == 1 else Color("765238")
+            _mesh_box(node, Vector3(0.48 if species == 1 else 0.65, 2.5 * tall, 0.48 if species == 1 else 0.65), Vector3(0, 1.25 * tall, 0), bark)
+            if species == 0: # Spruce
+                for layer in range(3):
+                    _mesh_sphere(node, 1.1 - layer * 0.22, Vector3(0, (2.25 + layer * 0.72) * tall, 0), Color("245b3d"), Vector3(0.9, 0.85, 0.9))
+            elif species == 1: # Birch
+                for stripe in range(3):
+                    _mesh_box(node, Vector3(0.5, 0.08, 0.5), Vector3(0, (0.8 + stripe * 0.55) * tall, 0), Color("4e504b"))
+                _mesh_sphere(node, 1.2, Vector3(0, 2.65 * tall, 0), Color("75a65a"), Vector3(0.85, 1.05, 0.85))
+            elif species == 2: # Oak
+                _mesh_sphere(node, 1.55, Vector3(0, 2.55 * tall, 0), Color("387b3c"), Vector3(1.25, 0.78, 1.1))
+                _mesh_sphere(node, 0.85, Vector3(0.9, 2.75 * tall, 0), Color("438a45"))
+            else: # Pine
+                _mesh_sphere(node, 1.05, Vector3(0, 2.9 * tall, 0), Color("317049"), Vector3(0.9, 1.45, 0.9))
+                _mesh_sphere(node, 0.7, Vector3(0, 3.7 * tall, 0), Color("28643e"))
         else:
             var rock_color := Color("929c9a") if i % 3 else Color("777f86")
             _mesh_sphere(node, rng.randf_range(0.65, 1.05), Vector3(0, 0.55, 0), rock_color, Vector3(1.1, 0.65, 0.9))
@@ -460,6 +546,9 @@ func _tap_world(screen: Vector2) -> void:
             best = dist
             pending_kind = "drop"
             pending_index = i
+    if pos.distance_to(BENCH_POS) < 2.0:
+        pending_kind = "bench"
+        pending_index = 0
     if pos.distance_to(TENT_POS) < 2.7:
         pending_kind = "tent"
         pending_index = 0
@@ -477,6 +566,8 @@ func _tap_world(screen: Vector2) -> void:
         return
     if pending_kind == "tent":
         pending_pos = TENT_POS
+    elif pending_kind == "bench":
+        pending_pos = BENCH_POS
     else:
         pending_pos = drops[pending_index]["pos"] if pending_kind == "drop" else resources[pending_index]["pos"]
     status_message = "Подходим к предмету…"
@@ -561,6 +652,7 @@ func _physics_process(delta: float) -> void:
     if sleep_in_progress:
         _advance_sleep(delta)
         return
+    _animate_camp(delta)
     day_clock += delta * 24.0 / DAY_SECONDS
     if day_clock >= 24.0:
         day_clock -= 24.0
@@ -576,6 +668,12 @@ func _physics_process(delta: float) -> void:
                 _pickup_index(pending_index)
             elif pending_kind == "tent":
                 _show_sleep_panel()
+            elif pending_kind == "bench":
+                sitting = true
+                player.position.x = BENCH_POS.x
+                player.position.z = BENCH_POS.y - 0.15
+                player_visual.position.y = -0.35
+                status_message = "Отдыхаем у костра — двигайся, чтобы встать"
             pending_index = -1
             pending_kind = ""
     var direction := touch_move
@@ -585,6 +683,16 @@ func _physics_process(delta: float) -> void:
             direction = towards.normalized()
     direction += Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
     direction = direction.limit_length(1.0)
+    if sitting and direction.length() > 0.1:
+        sitting = false
+        player_visual.position.y = 0.0
+    if sitting:
+        direction = Vector2.ZERO
+    if direction.length() > 0.12:
+        var desired_facing := atan2(-direction.x, -direction.y)
+        player_facing = lerp_angle(player_facing, desired_facing, 1.0 - exp(-9.0 * delta))
+        player_visual.rotation.y = player_facing
+        desired_camera_yaw = lerp_angle(desired_camera_yaw, -player_facing * 0.55, 1.0 - exp(-1.6 * delta))
     var current := Vector2(player.position.x, player.position.z)
     var motion := direction * WALK_SPEED * delta
     var next_x := current + Vector2(motion.x, 0)
@@ -595,7 +703,7 @@ func _physics_process(delta: float) -> void:
         current.y = next_y.y
     player.position.x = current.x
     player.position.z = current.y
-    _position_camera()
+    _position_camera(delta)
     if mining_active:
         if target_resource < 0 or not resources[target_resource]["alive"] or Vector2(player.position.x, player.position.z).distance_to(resources[target_resource]["pos"]) > 2.85:
             _stop_mining()
