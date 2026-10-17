@@ -291,7 +291,7 @@ func _position_camera(delta: float = 0.0) -> void:
         camera_initialized = true
     else:
         camera_focus = camera_focus.lerp(desired_focus, 1.0 - exp(-4.0 * delta))
-    camera_yaw = desired_camera_yaw  # Камера закреплена за направлением персонажа: без отката и вращения по кругу.
+    camera_yaw = 0.0  # Фиксированный ракурс: камера не вращается при поворотах персонажа.
     var offset := Vector3(sin(camera_yaw) * camera_distance * camera_tilt, camera_distance, cos(camera_yaw) * camera_distance * camera_tilt)
     camera.global_position = camera_focus + offset
     camera.look_at(camera_focus, Vector3.UP)
@@ -711,8 +711,7 @@ func _physics_process(delta: float) -> void:
     if sitting:
         direction = Vector2.ZERO
     player_visual.rotation.y = player_facing
-    # Не возвращаем камеру к старому направлению после отпускания пальца.
-    desired_camera_yaw = -player_facing
+    # Поворот персонажа не влияет на угол камеры.
 
     var current := Vector2(player.position.x, player.position.z)
     var motion := direction * WALK_SPEED * delta
