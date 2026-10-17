@@ -36,11 +36,9 @@ var mining_active := false
 var touch_move := Vector2.ZERO
 var joystick_touch := -1
 var joystick_origin := Vector2.ZERO
-var gather_touch := -1
-var gather_origin := Vector2.ZERO
-var gather_direction := Vector2.ZERO
-var gather_target := -1
-var touch_was_gesture := {}
+# Направление камеры запоминается в момент начала движения.
+# Поэтому удержание джойстика не меняет направление при повороте камеры.
+var joystick_reference_yaw := 0.0
 var active_touches := {}
 var pinch_previous := 0.0
 var pending_kind := ""
@@ -285,14 +283,13 @@ func _create_camera() -> void:
 func _position_camera(delta: float = 0.0) -> void:
     if camera == null or player == null:
         return
-    var desired_focus := player.global_position + Vector3(touch_move.x * 0.65, 0.35, touch_move.y * 0.65)
+    var desired_focus := player.global_position + Vector3(0, 0.35, 0)
     if not camera_initialized:
         camera_focus = desired_focus
         camera_initialized = true
     else:
-        camera_focus = camera_focus.lerp(desired_focus, 1.0 - exp(-2.6 * delta))
-    # Камера не вращается за направлением ходьбы.
-    camera_yaw = 0.0
+        camera_focus = camera_focus.lerp(desired_focus, 1.0 - exp(-4.0 * delta))
+    camera_yaw = lerp_angle(camera_yaw, desired_camera_yaw, 1.0 - exp(-3.6 * delta))
     var offset := Vector3(sin(camera_yaw) * camera_distance * camera_tilt, camera_distance, cos(camera_yaw) * camera_distance * camera_tilt)
     camera.global_position = camera_focus + offset
     camera.look_at(camera_focus, Vector3.UP)
@@ -518,7 +515,7 @@ func _update_ui() -> void:
         var hour := int(day_clock) % 24
         var minute := int((day_clock - floor(day_clock)) * 60.0)
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
-    zoom_label.text = "Слева — ходьба  •  Справа — добыча  •  Нажатие — предмет"
+    zoom_label.text = "Слева — движение  •  Нажми на предмет  •  Два пальца — масштаб"
     bag_label.text = "РЮКЗАК\n\nДерево: %d\nКамень: %d\nЯгоды: %d" % [inventory["wood"], inventory["stone"], inventory["berry"]]
 
 func _nearest_resource() -> int:
@@ -682,11 +679,12 @@ func _physics_process(delta: float) -> void:
                 status_message = "Отдыхаем у костра — двигайся, чтобы встать"
             pending_index = -1
             pending_kind = ""
-    var direction := touch_move
-    # Ручное движение отменяет автоподход к выбранному предмету.
-    if joystick_touch >= 0 and direction.length() > 0.12 and pending_index >= 0:
-        pending_index = -1
-        pending_kind = ""
+    # Джойстик задаёт направление относительно камеры в момент нажатия,
+    # а не относительно камеры, которая сейчас догоняет персонажа.
+    var direction := Vector2(
+        cos(joystick_reference_yaw) * touch_move.x + sin(joystick_reference_yaw) * touch_move.y,
+        -sin(joystick_reference_yaw) * touch_move.x + cos(joystick_reference_yaw) * touch_move.y
+    )
     if pending_index >= 0 and joystick_touch == -1:
         var towards := pending_pos - Vector2(player.position.x, player.position.z)
         if towards.length() > 1.95:
@@ -702,7 +700,8 @@ func _physics_process(delta: float) -> void:
         var desired_facing := atan2(-direction.x, -direction.y)
         player_facing = lerp_angle(player_facing, desired_facing, 1.0 - exp(-9.0 * delta))
         player_visual.rotation.y = player_facing
-        # Поворот персонажа не влияет на ориентацию камеры.
+        # Камера всегда возвращается за спину, без частичного поворота в лицо.
+        desired_camera_yaw = -player_facing
     var current := Vector2(player.position.x, player.position.z)
     var motion := direction * WALK_SPEED * delta
     var next_x := current + Vector2(motion.x, 0)
@@ -714,8 +713,6 @@ func _physics_process(delta: float) -> void:
     player.position.x = current.x
     player.position.z = current.y
     _position_camera(delta)
-    if gather_touch >= 0 and gather_direction.length() > 0.15 and not mining_active:
-        _try_gather_in_direction()
     if mining_active:
         if target_resource < 0 or not resources[target_resource]["alive"] or Vector2(player.position.x, player.position.z).distance_to(resources[target_resource]["pos"]) > 2.85:
             _stop_mining()
@@ -727,9 +724,6 @@ func _physics_process(delta: float) -> void:
             progress_bar.value = 100.0 * mining_progress / resources[target_resource]["duration"]
             if mining_progress >= resources[target_resource]["duration"]:
                 _finish_mining()
-    if gather_touch >= 0 and gather_direction.length() <= 0.15 and mining_active and gather_target >= 0:
-        _stop_mining()
-        gather_target = -1
     _move_animals(delta)
     _update_ui()
 
@@ -747,84 +741,40 @@ func _move_animals(delta: float) -> void:
             animal["node"].position.x = new_pos.x
             animal["node"].position.z = new_pos.y
 
-func _try_gather_in_direction() -> void:
-    # Добыча вторым джойстиком только при сознательном удержании справа.
-    var here := Vector2(player.position.x, player.position.z)
-    var best_index := -1
-    var best_distance := 3.0
-    for i in range(resources.size()):
-        if not resources[i]["alive"]:
-            continue
-        var towards: Vector2 = resources[i]["pos"] - here
-        var distance := towards.length()
-        if distance > 0.1 and distance < best_distance and towards.normalized().dot(gather_direction.normalized()) > 0.45:
-            best_index = i
-            best_distance = distance
-    if best_index >= 0:
-        gather_target = best_index
-        _begin_mining(best_index)
-
-func _cancel_gather() -> void:
-    gather_touch = -1
-    gather_direction = Vector2.ZERO
-    if gather_target >= 0:
-        _stop_mining()
-        gather_target = -1
-
 func _unhandled_input(event: InputEvent) -> void:
     if event is InputEventScreenTouch:
         if event.pressed:
             active_touches[event.index] = event.position
-            touch_was_gesture[event.index] = false
-            var width := get_viewport().get_visible_rect().size.x
-            var height := get_viewport().get_visible_rect().size.y
-            if event.position.y > height * 0.42 and event.position.x < width * 0.42 and joystick_touch < 0:
+            if active_touches.size() == 1 and event.position.x < get_viewport().get_visible_rect().size.x * 0.46:
                 joystick_touch = event.index
                 joystick_origin = event.position
-            elif event.position.y > height * 0.42 and event.position.x > width * 0.58 and gather_touch < 0:
-                gather_touch = event.index
-                gather_origin = event.position
-            elif active_touches.size() == 2 and joystick_touch < 0 and gather_touch < 0:
+                joystick_reference_yaw = camera_yaw
+            if active_touches.size() == 2:
+                touch_move = Vector2.ZERO
+                joystick_touch = -1
                 var pts := active_touches.values()
                 pinch_previous = (pts[0] as Vector2).distance_to(pts[1] as Vector2)
         else:
-            var was_gesture: bool = touch_was_gesture.get(event.index, false)
-            var was_joystick := event.index == joystick_touch
-            var was_gather := event.index == gather_touch
             active_touches.erase(event.index)
-            touch_was_gesture.erase(event.index)
-            if was_joystick:
+            if event.index == joystick_touch:
                 joystick_touch = -1
                 touch_move = Vector2.ZERO
-            elif was_gather:
-                _cancel_gather()
-            elif not was_gesture and pinch_previous <= 0.0:
+                if event.position.distance_to(joystick_origin) < 18.0:
+                    _tap_world(event.position)
+            elif active_touches.is_empty() and pinch_previous <= 0.0:
                 _tap_world(event.position)
             if active_touches.size() < 2:
                 pinch_previous = 0.0
     elif event is InputEventScreenDrag:
         active_touches[event.index] = event.position
-        if event.index == joystick_touch:
-            touch_move = ((event.position - joystick_origin) / 65.0).limit_length(1.0)
-        elif event.index == gather_touch:
-            gather_direction = ((event.position - gather_origin) / 65.0).limit_length(1.0)
-            if gather_target >= 0 and mining_active:
-                var here := Vector2(player.position.x, player.position.z)
-                if gather_target < resources.size() and resources[gather_target]["alive"]:
-                    var towards: Vector2 = resources[gather_target]["pos"] - here
-                    if towards.length() > 0.1 and towards.normalized().dot(gather_direction.normalized()) < 0.25:
-                        _stop_mining()
-                        gather_target = -1
-        elif active_touches.size() == 2 and joystick_touch < 0 and gather_touch < 0:
+        if active_touches.size() == 2:
             var pts := active_touches.values()
             var new_distance: float = (pts[0] as Vector2).distance_to(pts[1] as Vector2)
             if pinch_previous > 0.0:
                 _zoom((pinch_previous - new_distance) * 0.035)
             pinch_previous = new_distance
-            for key in active_touches.keys():
-                touch_was_gesture[key] = true
-        else:
-            touch_was_gesture[event.index] = true
+        elif event.index == joystick_touch:
+            touch_move = ((event.position - joystick_origin) / 65.0).limit_length(1.0)
     elif event is InputEventMouseButton and event.pressed:
         if event.button_index == MOUSE_BUTTON_WHEEL_UP:
             _zoom(-1.0)
