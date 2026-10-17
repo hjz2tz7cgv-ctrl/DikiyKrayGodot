@@ -3,6 +3,8 @@ extends Node2D
 const SAVE_PATH := "user://dikiy_krai.save"
 const WORLD := Vector2(2800, 2000)
 const SPEED := 185.0
+# Мягкий псевдо-3D наклон: 1.0 = вид строго сверху.
+const VIEW_TILT := 0.82
 var player := Vector2(1400, 1000)
 var facing := Vector2.RIGHT
 var health := 100.0
@@ -99,10 +101,14 @@ func _process(delta: float) -> void:
 
 func _draw() -> void:
 	var view := get_viewport_rect().size
-	var camera := player - view*0.5
-	draw_rect(Rect2(Vector2.ZERO,view), Color("6f9860"))
+	# Сжимаем вертикальную ось мира, оставляя интерфейс без изменений.
+	# Камера остаётся на персонаже, а область рисования расширяется.
+	var world_view := Vector2(view.x, view.y / VIEW_TILT)
+	var camera := player - world_view * 0.5
+	draw_set_transform(Vector2(0, view.y * (1.0 - VIEW_TILT) * 0.5), 0.0, Vector2(1.0, VIEW_TILT))
+	draw_rect(Rect2(Vector2.ZERO,world_view), Color("6f9860"))
 	for x in range(int(camera.x/90)-1,int((camera.x+view.x)/90)+2):
-		for y in range(int(camera.y/90)-1,int((camera.y+view.y)/90)+2):
+		for y in range(int(camera.y/90)-1,int((camera.y+world_view.y)/90)+2):
 			var pos := Vector2(x*90+28,y*90+30)-camera
 			var seed_val := abs((x*193+y*379)%7)
 			draw_circle(pos,2.5,Color("7eaa69") if seed_val<4 else Color("547b49"))
@@ -111,7 +117,7 @@ func _draw() -> void:
 	draw_circle(Vector2(1850,700)-camera,269,Color("509cb0"))
 	for r in resources:
 		var p: Vector2 = r["pos"]-camera
-		if not Rect2(Vector2(-60,-60),view+Vector2(120,120)).has_point(p): continue
+		if not Rect2(Vector2(-60,-60),world_view+Vector2(120,120)).has_point(p): continue
 		match r["kind"]:
 			"tree":
 				draw_circle(p+Vector2(5,7),26,Color("4c6c3d"));draw_circle(p,25,Color("285c36"));draw_circle(p+Vector2(-7,-8),18,Color("387a45"));draw_circle(p+Vector2(6,-9),13,Color("4a8c51"))
@@ -157,6 +163,8 @@ func _draw() -> void:
 	draw_circle(center-facing*5,11,Color("526e48"))
 	draw_line(center,center+facing*21,Color("e1c49e"),5)
 	if weapon != "fists": draw_line(center+facing*10,center+facing*(40 if weapon=="spear" else 29),Color("d0d1c5"),4)
+	# Джойстик рисуется в обычных координатах экрана.
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if joystick_pointer != -1:
 		draw_arc(joystick_origin,55,0,TAU,40,Color(1,1,1,0.25),3)
 		draw_circle(joystick_origin+joystick_direction*40,19,Color(1,1,1,0.25))
