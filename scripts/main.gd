@@ -73,7 +73,8 @@ var bag_panel: PanelContainer
 var bag_label: Label
 var zoom_label: Label
 var action_button: Button
-var action_menu: PopupMenu
+var action_menu: PanelContainer
+var action_list: VBoxContainer
 var action_options: Array[String] = []
 var nearby_action_kind := ""
 var nearby_action_position := Vector3.ZERO
@@ -479,6 +480,7 @@ func _create_ui() -> void:
     craft_button.text = "Крафт"
     craft_button.custom_minimum_size = Vector2(110, 56)
     craft_button.pressed.connect(_toggle_craft)
+    craft_button.visible = false
     top.add_child(craft_button)
     time_label = Label.new()
     time_label.add_theme_font_size_override("font_size", 20)
@@ -539,14 +541,15 @@ func _create_ui() -> void:
     progress_bar.visible = false
     bottom.add_child(progress_bar)
     bag_panel = PanelContainer.new()
-    bag_panel.set_anchors_preset(Control.PRESET_CENTER)
-    bag_panel.offset_left = -170
-    bag_panel.offset_right = 170
-    bag_panel.offset_top = -235
-    bag_panel.offset_bottom = 235
-    bag_panel.visible = false
     root.add_child(bag_panel)
+    bag_panel.set_anchors_preset(Control.PRESET_CENTER)
+    bag_panel.offset_left = -155
+    bag_panel.offset_right = 155
+    bag_panel.offset_top = -130
+    bag_panel.offset_bottom = 130
+    bag_panel.visible = false
     var bag_col := VBoxContainer.new()
+    bag_col.add_theme_constant_override("separation", 8)
     bag_panel.add_child(bag_col)
     survival_label = Label.new()
     survival_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
@@ -558,35 +561,40 @@ func _create_ui() -> void:
     survival_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     root.add_child(survival_label)
     bag_label = Label.new()
-    bag_label.add_theme_font_size_override("font_size", 25)
+    bag_label.add_theme_font_size_override("font_size", 18)
     bag_col.add_child(bag_label)
     # Рюкзак показывает только предметы; все действия вынесены в кнопку «Действие».
     # Действия у костра и воды теперь находятся рядом с объектами, не в рюкзаке.
     action_button = Button.new()
-    action_button.visible = false
-    action_button.custom_minimum_size = Vector2(190, 48)
-    action_button.size = Vector2(190, 48)
-    action_button.focus_mode = Control.FOCUS_NONE
     action_button.text = "Действие"
+    action_button.custom_minimum_size = Vector2(112, 52)
+    action_button.focus_mode = Control.FOCUS_NONE
     action_button.pressed.connect(_open_action_menu)
-    root.add_child(action_button)
-    action_button.mouse_filter = Control.MOUSE_FILTER_STOP
-    action_menu = PopupMenu.new()
-    action_menu.id_pressed.connect(_select_action)
+    top.add_child(action_button)
+    action_menu = PanelContainer.new()
     root.add_child(action_menu)
+    action_menu.set_anchors_preset(Control.PRESET_CENTER)
+    action_menu.offset_left = -160
+    action_menu.offset_right = 160
+    action_menu.offset_top = -175
+    action_menu.offset_bottom = 175
+    action_menu.visible = false
+    action_list = VBoxContainer.new()
+    action_list.add_theme_constant_override("separation", 5)
+    action_menu.add_child(action_list)
     var close := Button.new()
     close.text = "Закрыть"
     close.pressed.connect(_toggle_bag)
     bag_col.add_child(close)
     # Отдельное окно крафта: ресурсы расходуются только по кнопке «Создать».
     craft_panel = PanelContainer.new()
+    root.add_child(craft_panel)
     craft_panel.set_anchors_preset(Control.PRESET_CENTER)
-    craft_panel.offset_left = -190
-    craft_panel.offset_right = 190
+    craft_panel.offset_left = -160
+    craft_panel.offset_right = 160
     craft_panel.offset_top = -125
     craft_panel.offset_bottom = 125
     craft_panel.visible = false
-    root.add_child(craft_panel)
     var craft_col := VBoxContainer.new()
     craft_panel.add_child(craft_col)
     var craft_title := Label.new()
@@ -639,6 +647,7 @@ func _create_ui() -> void:
 func _toggle_craft() -> void:
     craft_panel.visible = not craft_panel.visible
     if craft_panel.visible:
+        action_menu.visible = false
         bag_panel.visible = false
         sleep_panel.visible = false
     _update_ui()
@@ -673,6 +682,9 @@ func _finish_hunt(index: int) -> void:
 
 func _toggle_bag() -> void:
     bag_panel.visible = not bag_panel.visible
+    if bag_panel.visible:
+        action_menu.visible = false
+        craft_panel.visible = false
     _update_ui()
 
 func _zoom(amount: float) -> void:
@@ -689,7 +701,7 @@ func _update_ui() -> void:
         var minute := int((day_clock - floor(day_clock)) * 60.0)
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
     zoom_label.text = "Слева — ходьба  •  Справа — камера  •  Масштаб: + / −"
-    bag_label.text = "РЮКЗАК\\nДерево: %d  Камень: %d\\nЯгоды: %d  Грибы: %d\\nМясо: %d  Жареное: %d  Шкуры: %d\\nКопьё: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["mushroom"], inventory["meat"], inventory["cooked_meat"], inventory["hide"], "есть" if has_spear else "нет"]
+    bag_label.text = "РЮКЗАК\nДерево: %d    Камень: %d\nЯгоды: %d    Грибы: %d\nМясо: %d    Жареное: %d\nШкуры: %d    Копьё: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["mushroom"], inventory["meat"], inventory["cooked_meat"], inventory["hide"], "есть" if has_spear else "нет"]
     if craft_recipe_button != null:
         craft_recipe_button.text = "Копьё уже создано" if has_spear else "Создать копьё (3 дерева + 1 камень)"
         craft_recipe_button.disabled = has_spear or inventory["wood"] < 3 or inventory["stone"] < 1
@@ -729,13 +741,19 @@ func _survival_action(kind: String) -> void:
 func _open_action_menu() -> void:
     if action_menu == null:
         return
-    action_menu.clear()
+    if action_menu.visible:
+        action_menu.visible = false
+        return
+    bag_panel.visible = false
+    craft_panel.visible = false
+    for child in action_list.get_children():
+        child.queue_free()
     action_options.clear()
     var here := Vector2(player.global_position.x, player.global_position.z)
     if here.distance_to(FIRE_POS) <= 4.0:
-        _add_action_option("Пожарить мясо у костра", "cook")
+        _add_action_option("Пожарить мясо", "cook")
     if here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 2.5:
-        _add_action_option("Попить воды / набрать воду", "water")
+        _add_action_option("Попить воды", "water")
     var resource_index := _nearest_resource()
     if resource_index >= 0:
         var kind: String = resources[resource_index]["kind"]
@@ -749,30 +767,37 @@ func _open_action_menu() -> void:
         elif kind == "mushroom":
             title = "Собрать грибы"
         _add_action_option(title, "resource")
-    if inventory.get("berry", 0) > 0:
-        _add_action_option("Съесть ягоды (%d)" % inventory["berry"], "berry")
-    if inventory.get("mushroom", 0) > 0:
-        _add_action_option("Съесть гриб (%d)" % inventory["mushroom"], "mushroom")
-    if inventory.get("cooked_meat", 0) > 0:
-        _add_action_option("Съесть жареное мясо (%d)" % inventory["cooked_meat"], "cooked_meat")
-    if action_options.is_empty():
-        _add_action_option("Нет доступных действий", "none")
-        action_menu.set_item_disabled(0, true)
-    var view := get_viewport().get_visible_rect().size
-    var menu_width := 270.0
-    action_menu.position = Vector2i(int(clampf(action_button.global_position.x, 0.0, maxf(0.0, view.x - menu_width))), int(maxf(20.0, action_button.global_position.y - 55.0 * action_options.size())))
-    action_menu.size = Vector2i(int(menu_width), 0)
-    action_menu.popup()
+    if int(inventory.get("berry", 0)) > 0:
+        _add_action_option("Съесть ягоды", "berry")
+    if int(inventory.get("mushroom", 0)) > 0:
+        _add_action_option("Съесть гриб", "mushroom")
+    if int(inventory.get("cooked_meat", 0)) > 0:
+        _add_action_option("Съесть жареное мясо", "cooked_meat")
+    _add_action_option("Крафт", "craft")
+    var close := Button.new()
+    close.text = "Закрыть"
+    close.custom_minimum_size.y = 42
+    close.pressed.connect(func(): action_menu.visible = false)
+    action_list.add_child(close)
+    action_menu.visible = true
 
 func _add_action_option(title: String, kind: String) -> void:
-    action_menu.add_item(title, action_options.size())
+    var id := action_options.size()
     action_options.append(kind)
+    var button := Button.new()
+    button.text = title
+    button.custom_minimum_size.y = 42
+    button.pressed.connect(_select_action.bind(id))
+    action_list.add_child(button)
 
 func _select_action(id: int) -> void:
     if id < 0 or id >= action_options.size():
         return
     var kind := action_options[id]
-    if kind == "resource":
+    action_menu.visible = false
+    if kind == "craft":
+        _toggle_craft()
+    elif kind == "resource":
         var index := _nearest_resource()
         if index >= 0:
             _begin_mining(index)
@@ -781,18 +806,9 @@ func _select_action(id: int) -> void:
     _update_nearby_action()
 
 func _update_nearby_action() -> void:
-    if action_button == null or player == null:
-        return
-    action_button.visible = false
-    if bag_panel.visible or craft_panel.visible or sleep_panel.visible or sleep_in_progress:
-        return
-    var here := Vector2(player.global_position.x, player.global_position.z)
-    var near_object := here.distance_to(FIRE_POS) <= 4.0 or here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 2.5 or _nearest_resource() >= 0
-    var has_food: bool = int(inventory.get("berry", 0)) > 0 or int(inventory.get("mushroom", 0)) > 0 or int(inventory.get("cooked_meat", 0)) > 0
-    if near_object or has_food:
-        var view_size := get_viewport().get_visible_rect().size
-        action_button.text = "Действие"
-        action_button.position = Vector2(maxf(8.0, (view_size.x - action_button.size.x) * 0.5), maxf(115.0, view_size.y - 172.0))
+    # Кнопка «Действие» всегда рядом с «Рюкзаком».
+    # Доступные действия обновляются при открытии меню.
+    if action_button != null:
         action_button.visible = true
 
 func _nearest_resource() -> int:
