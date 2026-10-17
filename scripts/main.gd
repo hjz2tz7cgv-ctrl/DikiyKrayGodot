@@ -29,7 +29,11 @@ var resources: Array[Dictionary] = []
 var drops: Array[Dictionary] = []
 var animals: Array[Dictionary] = []
 var scenery: Array[Node3D] = []
-var inventory := {"wood": 0, "stone": 0, "berry": 0}
+var inventory := {"wood": 0, "stone": 0, "berry": 0, "meat": 0, "hide": 0}
+var has_spear := false
+var hunt_target := -1
+var attack_cooldown := 0.0
+var spear_button: Button
 var target_resource := -1
 var mining_progress := 0.0
 var mining_active := false
@@ -408,7 +412,7 @@ func _create_animals() -> void:
             _mesh_sphere(animal, 0.62, Vector3(0, 0.6, 0), Color("665044"), Vector3(1.35, 0.8, 0.8))
             _mesh_sphere(animal, 0.29, Vector3(0.75, 0.64, 0), Color("856859"))
             _mesh_sphere(animal, 0.16, Vector3(0.98, 0.58, 0), Color("a48477"), Vector3(0.45, 0.8, 1.0))
-        animals.append({"node": animal, "pos": pos, "dir": Vector2.RIGHT.rotated(rng.randf_range(0, TAU)), "timer": rng.randf_range(1.0, 3.0), "speed": speed, "species": species})
+        animals.append({"node": animal, "pos": pos, "dir": Vector2.RIGHT.rotated(rng.randf_range(0, TAU)), "timer": rng.randf_range(1.0, 3.0), "speed": speed, "species": species, "health": 2 if species == "rabbit" else 4 if species == "deer" else 5, "alive": true})
 
 func _create_ui() -> void:
     hud = CanvasLayer.new()
@@ -433,6 +437,11 @@ func _create_ui() -> void:
     bag_button.custom_minimum_size = Vector2(145, 56)
     bag_button.pressed.connect(_toggle_bag)
     top.add_child(bag_button)
+    spear_button = Button.new()
+    spear_button.text = "Копьё: 3 дерева + 1 камень"
+    spear_button.custom_minimum_size = Vector2(185, 56)
+    spear_button.pressed.connect(_craft_spear)
+    top.add_child(spear_button)
     time_label = Label.new()
     time_label.add_theme_font_size_override("font_size", 20)
     top.add_child(time_label)
@@ -503,6 +512,34 @@ func _create_ui() -> void:
     sleep_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
     root.add_child(sleep_fade)
 
+func _craft_spear() -> void:
+    if has_spear:
+        status_message = "Копьё уже изготовлено"
+    elif inventory["wood"] >= 3 and inventory["stone"] >= 1:
+        inventory["wood"] -= 3
+        inventory["stone"] -= 1
+        has_spear = true
+        status_message = "Деревянное копьё готово! Нажми на животное"
+    else:
+        status_message = "Для копья нужны 3 дерева и 1 камень"
+    _update_ui()
+
+func _finish_hunt(index: int) -> void:
+    var animal: Dictionary = animals[index]
+    animal["alive"] = false
+    animal["node"].queue_free()
+    animals[index] = animal
+    var pos: Vector2 = animal["pos"]
+    for kind in ["meat", "hide"]:
+        var drop := Node3D.new()
+        drop.position = Vector3(pos.x + rng.randf_range(-0.45, 0.45), 0.35, pos.y + rng.randf_range(-0.45, 0.45))
+        add_child(drop)
+        _mesh_sphere(drop, 0.27, Vector3.ZERO, Color("bd625a") if kind == "meat" else Color("b9956a"))
+        drops.append({"kind": kind, "pos": Vector2(drop.position.x, drop.position.z), "node": drop})
+    hunt_target = -1
+    status_message = "Охота завершена! Нажми на мясо и шкуру"
+    _update_ui()
+
 func _toggle_bag() -> void:
     bag_panel.visible = not bag_panel.visible
     _update_ui()
@@ -519,7 +556,8 @@ func _update_ui() -> void:
         var minute := int((day_clock - floor(day_clock)) * 60.0)
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
     zoom_label.text = "Слева — ходьба  •  Справа — добыча  •  Нажми на предмет"
-    bag_label.text = "РЮКЗАК\n\nДерево: %d\nКамень: %d\nЯгоды: %d" % [inventory["wood"], inventory["stone"], inventory["berry"]]
+    bag_label.text = "РЮКЗАК\nДерево: %d  Камень: %d\nЯгоды: %d  Мясо: %d  Шкуры: %d\nКопьё: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["meat"], inventory["hide"], "есть" if has_spear else "нет"]
+    spear_button.text = "Копьё готово" if has_spear else "Копьё: 3 дерева + 1 камень"
 
 func _nearest_resource() -> int:
     var closest := -1
@@ -568,6 +606,27 @@ func _tap_world(screen: Vector2) -> void:
                 best = dist
                 pending_kind = "resource"
                 pending_index = i
+    # Выбор животного отдельным нажатием, без автоматической охоты поблизости.
+    if pending_kind == "":
+        var animal_best := 1.9
+        for i in range(animals.size()):
+            if not animals[i]["alive"]:
+                continue
+            var animal_dist: float = pos.distance_to(animals[i]["pos"])
+            if animal_dist < animal_best:
+                animal_best = animal_dist
+                pending_kind = "animal"
+                pending_index = i
+    if pending_kind == "animal":
+        if not has_spear:
+            status_message = "Для охоты сначала изготовь копьё"
+        else:
+            hunt_target = pending_index
+            status_message = "Охота! Персонаж преследует животное"
+        pending_index = -1
+        pending_kind = ""
+        _update_ui()
+        return
     if pending_index < 0:
         return
     if pending_kind == "tent":
@@ -682,6 +741,7 @@ func _physics_process(delta: float) -> void:
                 status_message = "Отдыхаем у костра — двигайся, чтобы встать"
             pending_index = -1
             pending_kind = ""
+    attack_cooldown = maxf(0.0, attack_cooldown - delta)
     # Джойстик задаёт абсолютное направление движения на экране.
     # Камера имеет фиксированный мировой ракурс и не зависит от поворота игрока.
     var direction := Vector2.ZERO
@@ -694,14 +754,31 @@ func _physics_process(delta: float) -> void:
         # Ручное управление отменяет автоподход к выбранному объекту.
         pending_index = -1
         pending_kind = ""
+        hunt_target = -1
     elif pending_index >= 0 and joystick_touch == -1:
         var towards := pending_pos - Vector2(player.position.x, player.position.z)
         if towards.length() > 1.95:
             direction = towards.normalized()
             var desired_facing := atan2(-direction.x, -direction.y)
             player_facing = lerp_angle(player_facing, desired_facing, 1.0 - exp(-10.0 * delta))
+    elif hunt_target >= 0 and hunt_target < animals.size() and animals[hunt_target]["alive"]:
+        var prey: Dictionary = animals[hunt_target]
+        var prey_offset: Vector2 = prey["pos"] - Vector2(player.position.x, player.position.z)
+        if prey_offset.length() > 1.55:
+            direction = prey_offset.normalized()
+        elif attack_cooldown <= 0.0:
+            attack_cooldown = 0.65
+            prey["health"] = int(prey["health"]) - 1
+            animals[hunt_target] = prey
+            status_message = "Удар копьём!"
+            if prey["health"] <= 0:
+                _finish_hunt(hunt_target)
+        if direction.length() > 0.1:
+            var hunt_facing := atan2(-direction.x, -direction.y)
+            player_facing = lerp_angle(player_facing, hunt_facing, 1.0 - exp(-10.0 * delta))
     var keyboard_direction := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
     if keyboard_direction.length() > 0.12:
+        hunt_target = -1
         direction = keyboard_direction
         var keyboard_facing := atan2(-direction.x, -direction.y)
         player_facing = lerp_angle(player_facing, keyboard_facing, 1.0 - exp(-10.0 * delta))
@@ -746,18 +823,30 @@ func _physics_process(delta: float) -> void:
     _update_ui()
 
 func _move_animals(delta: float) -> void:
-    for animal in animals:
+    for i in range(animals.size()):
+        var animal: Dictionary = animals[i]
+        if not animal["alive"]:
+            continue
+        var hunted := hunt_target == i
+        if hunted:
+            var escape: Vector2 = animal["pos"] - Vector2(player.position.x, player.position.z)
+            if escape.length() < 12.0 and escape.length() > 0.01:
+                animal["dir"] = escape.normalized()
+                animal["timer"] = 0.6
         animal["timer"] -= delta
         if animal["timer"] <= 0:
             animal["timer"] = rng.randf_range(1.0, 3.0)
             animal["dir"] = Vector2.RIGHT.rotated(rng.randf_range(0, TAU))
-        var new_pos: Vector2 = animal["pos"] + animal["dir"] * delta * animal["speed"]
+        var flee_speed: float = 3.2 if animal["species"] == "rabbit" else 3.6 if animal["species"] == "deer" else 2.4
+        var actual_speed: float = flee_speed if hunted else animal["speed"]
+        var new_pos: Vector2 = animal["pos"] + animal["dir"] * delta * actual_speed
         if _blocked(new_pos, 0.5):
             animal["dir"] = -animal["dir"].rotated(rng.randf_range(-0.8, 0.8))
         else:
             animal["pos"] = new_pos
             animal["node"].position.x = new_pos.x
             animal["node"].position.z = new_pos.y
+        animals[i] = animal
 
 func _unhandled_input(event: InputEvent) -> void:
     if event is InputEventScreenTouch:
