@@ -290,20 +290,23 @@ func _create_camera() -> void:
     _position_camera(0.016)
 
 func _position_camera(delta: float = 0.0) -> void:
-    if camera == null or player == null:
+    if camera == null or player == null or player_visual == null:
         return
-    var desired_focus := player.global_position + Vector3(0, 0.35, 0)
-    if not camera_initialized:
-        camera_focus = desired_focus
+    # Камера закреплена позади направления взгляда персонажа.
+    # Нет отдельного угла камеры и нет самостоятельного доворота вокруг игрока.
+    var facing: float = player_visual.rotation.y
+    var backward := Vector3(-sin(facing), 0.0, cos(facing))
+    var target_focus := player.global_position + Vector3(0.0, 0.35, 0.0)
+    var target_position := target_focus + backward * camera_distance * camera_tilt + Vector3.UP * camera_distance
+    if not camera_initialized or delta <= 0.0:
+        camera_focus = target_focus
+        camera.global_position = target_position
         camera_initialized = true
     else:
-        # Камера следует за положением и фактическим направлением модели игрока.
-        camera_focus = camera_focus.lerp(desired_focus, 1.0 - exp(-4.0 * delta))
-    # Камера следует за фактическим направлением модели, не за джойстиком.
-    desired_camera_yaw = -player_visual.rotation.y
-    camera_yaw = lerp_angle(camera_yaw, desired_camera_yaw, 1.0 - exp(-5.0 * delta))
-    var offset := Vector3(sin(camera_yaw) * camera_distance * camera_tilt, camera_distance, cos(camera_yaw) * camera_distance * camera_tilt)
-    camera.global_position = camera_focus + offset
+        var follow_weight := 1.0 - exp(-5.0 * delta)
+        camera_focus = camera_focus.lerp(target_focus, follow_weight)
+        camera.global_position = camera.global_position.lerp(target_position, follow_weight)
+    # Поворот камеры определяется только её позицией относительно персонажа.
     camera.look_at(camera_focus, Vector3.UP)
 
 func _is_lake(pos: Vector2, margin := 0.0) -> bool:
