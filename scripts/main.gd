@@ -683,7 +683,7 @@ func _physics_process(delta: float) -> void:
             pending_kind = ""
     # Direction is locked to the camera heading when the movement finger lands.
     # Rotating camera during movement must not bend the walking path.
-    var direction := touch_move.rotated(joystick_basis_yaw)
+    var direction := touch_move.rotated(-joystick_basis_yaw)
     if pending_index >= 0 and joystick_touch == -1:
         var towards := pending_pos - Vector2(player.position.x, player.position.z)
         if towards.length() > 1.95:
