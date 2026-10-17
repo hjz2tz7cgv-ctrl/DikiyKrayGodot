@@ -42,15 +42,31 @@ var action_button: Button
 var status_message := "Подойдите к дереву или камню"
 var rng := RandomNumberGenerator.new()
 
+# 24 минуты реального времени = одни игровые сутки.
+const DAY_SECONDS := 1440.0
+const TENT_POS := Vector2(4.8, 3.5)
+var day_clock := 9.0
+var day_count := 1
+var sun_light: DirectionalLight3D
+var sky_environment: Environment
+var tent_node: Node3D
+var sleep_panel: PanelContainer
+var time_label: Label
+var sleep_fade: ColorRect
+var sleep_in_progress := false
+var sleep_elapsed := 0.0
+
 func _ready() -> void:
     rng.seed = 20261017
     _create_world()
+    _create_tent()
     _create_player()
     _create_camera()
     _create_resources()
     _create_scenery()
     _create_animals()
     _create_ui()
+    _update_lighting()
     _update_ui()
 
 func _material(color: Color) -> StandardMaterial3D:
@@ -89,6 +105,7 @@ func _create_world() -> void:
     sun.rotation_degrees = Vector3(-58, -35, 0)
     sun.light_energy = 1.1
     add_child(sun)
+    sun_light = sun
     var env := WorldEnvironment.new()
     var e := Environment.new()
     e.background_mode = Environment.BG_COLOR
@@ -97,7 +114,75 @@ func _create_world() -> void:
     e.ambient_light_color = Color("d9e6de")
     e.ambient_light_energy = 0.8
     env.environment = e
+    sky_environment = e
     add_child(env)
+
+func _create_tent() -> void:
+    # Палатка на стартовой поляне. Простая геометрия для WebGL/iPhone.
+    tent_node = Node3D.new()
+    tent_node.name = "StartTent"
+    tent_node.position = Vector3(TENT_POS.x, 0.0, TENT_POS.y)
+    add_child(tent_node)
+    _mesh_box(tent_node, Vector3(3.7, 0.14, 3.2), Vector3(0, 0.03, 0), Color("554637"))
+    var cloth := Color("b9a16d")
+    var roof_left := _mesh_box(tent_node, Vector3(2.45, 0.12, 3.35), Vector3(-0.88, 1.05, 0), cloth)
+    roof_left.rotation.z = -0.85
+    var roof_right := _mesh_box(tent_node, Vector3(2.45, 0.12, 3.35), Vector3(0.88, 1.05, 0), cloth)
+    roof_right.rotation.z = 0.85
+    _mesh_box(tent_node, Vector3(1.35, 1.45, 0.12), Vector3(0, 0.77, -1.67), Color("806a48"))
+    _mesh_box(tent_node, Vector3(1.1, 1.15, 0.13), Vector3(0, 0.61, 1.68), Color("473d35"))
+    _mesh_box(tent_node, Vector3(0.18, 2.2, 0.18), Vector3(0, 1.13, -1.75), Color("6d4d2d"))
+
+func _update_lighting() -> void:
+    # Плавное освещение без тяжёлых эффектов постобработки.
+    var phase := (day_clock - 6.0) / 24.0 * TAU
+    var daylight := clampf(sin(phase), 0.0, 1.0)
+    var twilight := clampf(sin(phase) * 2.0 + 0.20, 0.0, 1.0)
+    if sun_light != null:
+        sun_light.rotation_degrees = Vector3(-12.0 - 68.0 * daylight, -35.0 + day_clock * 8.0, 0)
+        sun_light.light_energy = lerpf(0.07, 1.15, daylight)
+    if sky_environment != null:
+        sky_environment.background_color = Color("101c38").lerp(Color("91bfd7"), twilight)
+        sky_environment.ambient_light_color = Color("66738e").lerp(Color("e1e9dd"), twilight)
+        sky_environment.ambient_light_energy = lerpf(0.27, 0.83, twilight)
+
+func _start_sleep() -> void:
+    if sleep_in_progress:
+        return
+    sleep_panel.visible = false
+    sleep_in_progress = true
+    sleep_elapsed = 0.0
+    pending_kind = ""
+    pending_index = -1
+    touch_move = Vector2.ZERO
+    mining_active = false
+    progress_bar.visible = false
+    status_message = "Отдыхаем в палатке…"
+    _update_ui()
+
+func _advance_sleep(delta: float) -> void:
+    if not sleep_in_progress:
+        return
+    sleep_elapsed += delta
+    var alpha := sin(clampf(sleep_elapsed / 2.0, 0.0, 1.0) * PI)
+    sleep_fade.color = Color(0.015, 0.025, 0.06, alpha)
+    if sleep_elapsed >= 1.0 and day_clock != 7.0:
+        if day_clock >= 7.0:
+            day_count += 1
+        day_clock = 7.0
+        _update_lighting()
+    if sleep_elapsed >= 2.0:
+        sleep_in_progress = false
+        sleep_fade.color = Color(0, 0, 0, 0)
+        status_message = "Доброе утро! День %d" % day_count
+        _update_ui()
+
+func _show_sleep_panel() -> void:
+    pending_kind = ""
+    pending_index = -1
+    sleep_panel.visible = true
+    status_message = "Палатка: можно поспать до утра"
+    _update_ui()
 
 func _create_player() -> void:
     player = CharacterBody3D.new()
@@ -134,7 +219,7 @@ func _is_lake(pos: Vector2, margin := 0.0) -> bool:
 func _can_place(pos: Vector2, radius: float) -> bool:
     if _is_lake(pos, radius + 0.3):
         return false
-    if pos.length() < 3.3:
+    if pos.length() < 3.3 or pos.distance_to(TENT_POS) < radius + 3.5:
         return false
     for obstacle in obstacles:
         if pos.distance_to(obstacle["pos"]) < radius + obstacle["radius"] + 1.0:
@@ -256,6 +341,9 @@ func _create_ui() -> void:
     bag_button.custom_minimum_size = Vector2(145, 56)
     bag_button.pressed.connect(_toggle_bag)
     top.add_child(bag_button)
+    time_label = Label.new()
+    time_label.add_theme_font_size_override("font_size", 20)
+    top.add_child(time_label)
     var bottom := VBoxContainer.new()
     bottom.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
     bottom.offset_left = 210
@@ -294,6 +382,34 @@ func _create_ui() -> void:
     close.text = "Закрыть"
     close.pressed.connect(_toggle_bag)
     bag_col.add_child(close)
+    sleep_panel = PanelContainer.new()
+    sleep_panel.set_anchors_preset(Control.PRESET_CENTER)
+    sleep_panel.offset_left = -190
+    sleep_panel.offset_right = 190
+    sleep_panel.offset_top = -110
+    sleep_panel.offset_bottom = 110
+    sleep_panel.visible = false
+    root.add_child(sleep_panel)
+    var sleep_col := VBoxContainer.new()
+    sleep_panel.add_child(sleep_col)
+    var sleep_title := Label.new()
+    sleep_title.text = "ПАЛАТКА\nОтдохнуть до утра?"
+    sleep_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    sleep_title.add_theme_font_size_override("font_size", 25)
+    sleep_col.add_child(sleep_title)
+    var sleep_yes := Button.new()
+    sleep_yes.text = "Спать до утра"
+    sleep_yes.pressed.connect(_start_sleep)
+    sleep_col.add_child(sleep_yes)
+    var sleep_no := Button.new()
+    sleep_no.text = "Отмена"
+    sleep_no.pressed.connect(func(): sleep_panel.visible = false)
+    sleep_col.add_child(sleep_no)
+    sleep_fade = ColorRect.new()
+    sleep_fade.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    sleep_fade.color = Color(0, 0, 0, 0)
+    sleep_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    root.add_child(sleep_fade)
 
 func _toggle_bag() -> void:
     bag_panel.visible = not bag_panel.visible
@@ -306,6 +422,10 @@ func _zoom(amount: float) -> void:
 
 func _update_ui() -> void:
     info_label.text = "ДИКИЙ КРАЙ 3D   |   " + status_message
+    if time_label != null:
+        var hour := int(day_clock) % 24
+        var minute := int((day_clock - floor(day_clock)) * 60.0)
+        time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
     zoom_label.text = "Слева — движение  •  Нажми на предмет  •  Два пальца — масштаб"
     bag_label.text = "РЮКЗАК\n\nДерево: %d\nКамень: %d\nЯгоды: %d" % [inventory["wood"], inventory["stone"], inventory["berry"]]
 
@@ -323,7 +443,7 @@ func _nearest_resource() -> int:
     return closest
 
 func _tap_world(screen: Vector2) -> void:
-    if camera == null or bag_panel.visible:
+    if camera == null or bag_panel.visible or sleep_panel.visible or sleep_in_progress:
         return
     var origin := camera.project_ray_origin(screen)
     var ray_dir := camera.project_ray_normal(screen)
@@ -340,6 +460,9 @@ func _tap_world(screen: Vector2) -> void:
             best = dist
             pending_kind = "drop"
             pending_index = i
+    if pos.distance_to(TENT_POS) < 2.7:
+        pending_kind = "tent"
+        pending_index = 0
     if pending_kind == "":
         best = 2.0
         for i in range(resources.size()):
@@ -352,7 +475,10 @@ func _tap_world(screen: Vector2) -> void:
                 pending_index = i
     if pending_index < 0:
         return
-    pending_pos = drops[pending_index]["pos"] if pending_kind == "drop" else resources[pending_index]["pos"]
+    if pending_kind == "tent":
+        pending_pos = TENT_POS
+    else:
+        pending_pos = drops[pending_index]["pos"] if pending_kind == "drop" else resources[pending_index]["pos"]
     status_message = "Подходим к предмету…"
     _update_ui()
 
@@ -432,6 +558,14 @@ func _blocked(pos: Vector2, radius: float) -> bool:
     return false
 
 func _physics_process(delta: float) -> void:
+    if sleep_in_progress:
+        _advance_sleep(delta)
+        return
+    day_clock += delta * 24.0 / DAY_SECONDS
+    if day_clock >= 24.0:
+        day_clock -= 24.0
+        day_count += 1
+    _update_lighting()
     _animate_pickup(delta)
     if pending_index >= 0:
         var here := Vector2(player.position.x, player.position.z)
@@ -440,6 +574,8 @@ func _physics_process(delta: float) -> void:
                 _begin_mining(pending_index)
             elif pending_kind == "drop" and pending_index < drops.size():
                 _pickup_index(pending_index)
+            elif pending_kind == "tent":
+                _show_sleep_panel()
             pending_index = -1
             pending_kind = ""
     var direction := touch_move
@@ -472,6 +608,7 @@ func _physics_process(delta: float) -> void:
             if mining_progress >= resources[target_resource]["duration"]:
                 _finish_mining()
     _move_animals(delta)
+    _update_ui()
 
 func _move_animals(delta: float) -> void:
     for animal in animals:
