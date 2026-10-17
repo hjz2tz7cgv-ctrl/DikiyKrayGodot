@@ -298,9 +298,10 @@ func _position_camera(delta: float = 0.0) -> void:
         camera_initialized = true
     else:
         # Камера следует за положением и фактическим направлением модели игрока.
-        camera_focus = camera_focus.lerp(desired_focus, 1.0 - exp(-2.8 * delta))
-    desired_camera_yaw = -player_facing
-    camera_yaw = lerp_angle(camera_yaw, desired_camera_yaw, 1.0 - exp(-3.0 * delta))
+        camera_focus = camera_focus.lerp(desired_focus, 1.0 - exp(-4.0 * delta))
+    # Камера следует за фактическим направлением модели, не за джойстиком.
+    desired_camera_yaw = -player_visual.rotation.y
+    camera_yaw = lerp_angle(camera_yaw, desired_camera_yaw, 1.0 - exp(-5.0 * delta))
     var offset := Vector3(sin(camera_yaw) * camera_distance * camera_tilt, camera_distance, cos(camera_yaw) * camera_distance * camera_tilt)
     camera.global_position = camera_focus + offset
     camera.look_at(camera_focus, Vector3.UP)
@@ -423,7 +424,7 @@ func _create_ui() -> void:
     add_child(hud)
     var root := Control.new()
     root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-    root.mouse_filter = Control.MOUSE_FILTER_PASS
+    root.mouse_filter = Control.MOUSE_FILTER_IGNORE
     hud.add_child(root)
     var top := HBoxContainer.new()
     top.set_anchors_preset(Control.PRESET_TOP_WIDE)
@@ -585,7 +586,7 @@ func _toggle_bag() -> void:
     _update_ui()
 
 func _zoom(amount: float) -> void:
-    camera_distance = clampf(camera_distance + amount, 7.0, 29.0)
+    camera_distance = clampf(camera_distance + amount, 5.5, 32.0)
     _position_camera()
     _update_ui()
 
@@ -831,7 +832,7 @@ func _physics_process(delta: float) -> void:
     if sitting:
         direction = Vector2.ZERO
     player_visual.rotation.y = player_facing
-    # Камера ориентируется на player_facing, а не на нажатие джойстика.
+    # Камера ориентируется на реальный поворот модели, а не на касание.
 
     var current := Vector2(player.position.x, player.position.z)
     var motion := direction * WALK_SPEED * delta
@@ -938,6 +939,11 @@ func _input(event: InputEvent) -> void:
                     _tap_world(event.position)
             elif active_touches.is_empty():
                 _tap_world(event.position)
+    elif event is InputEventMagnifyGesture:
+        # На устройствах, где браузер/Godot передаёт отдельный жест увеличения.
+        if event.factor > 0.0:
+            camera_distance = clampf(camera_distance / event.factor, 5.5, 32.0)
+            _position_camera()
     elif event is InputEventScreenDrag:
         active_touches[event.index] = event.position
         if pinch_in_progress:
@@ -946,7 +952,10 @@ func _input(event: InputEvent) -> void:
                 var new_distance: float = (pts[0] as Vector2).distance_to(pts[1] as Vector2)
                 if pinch_previous > 0.0:
                     # Раздвинуть пальцы = приблизить камеру.
-                    _zoom((pinch_previous - new_distance) * 0.035)
+                    # Отношение расстояний даёт одинаковую чувствительность при любом масштабе.
+                    if new_distance > 8.0:
+                        camera_distance = clampf(camera_distance * pinch_previous / new_distance, 5.5, 32.0)
+                        _position_camera()
                 pinch_previous = new_distance
             return
         if event.index == joystick_touch:
