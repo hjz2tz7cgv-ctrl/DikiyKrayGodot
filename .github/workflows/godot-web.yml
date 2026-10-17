@@ -3,7 +3,7 @@ name: Build Godot Web
 
 on:
   push:
-    branches: [main]
+    branches: [main, 3d-version]
   workflow_dispatch:
 
 permissions:
