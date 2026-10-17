@@ -51,6 +51,8 @@ var gather_touch := -1
 var gather_origin := Vector2.ZERO
 var gather_direction := Vector2.ZERO
 var camera_input_yaw := 0.0
+var camera_smooth_yaw := 0.0
+var camera_yaw_initialized := false
 var joystick_basis_yaw := 0.0
 var active_touches := {}
 var pinch_previous := 0.0
@@ -307,7 +309,13 @@ func _position_camera(delta: float = 0.0) -> void:
         camera_focus = camera_focus.lerp(target_focus, 1.0 - exp(-7.0 * delta))
     else:
         camera_focus = target_focus
-    var backward := Vector3(sin(camera_input_yaw), 0.0, cos(camera_input_yaw))
+    # Поворот камеры плавный даже при резком свайпе правым пальцем.
+    if not camera_yaw_initialized:
+        camera_smooth_yaw = camera_input_yaw
+        camera_yaw_initialized = true
+    elif delta > 0.0:
+        camera_smooth_yaw = lerp_angle(camera_smooth_yaw, camera_input_yaw, 1.0 - exp(-2.0 * delta))
+    var backward := Vector3(sin(camera_smooth_yaw), 0.0, cos(camera_smooth_yaw))
     camera.global_position = camera_focus + backward * camera_distance * camera_tilt + Vector3.UP * camera_distance
     camera.look_at(camera_focus, Vector3.UP)
 
@@ -1036,8 +1044,7 @@ func _input(event: InputEvent) -> void:
         if event.index == joystick_touch:
             touch_move = ((event.position - joystick_origin) / 65.0).limit_length(1.0)
         elif event.index == gather_touch:
-            camera_input_yaw -= event.relative.x * 0.005
-            _position_camera()
+            camera_input_yaw -= event.relative.x * 0.003
 
 func _unhandled_input(event: InputEvent) -> void:
     if event is InputEventMouseButton and event.pressed:
