@@ -573,6 +573,7 @@ func _create_ui() -> void:
     action_button.focus_mode = Control.FOCUS_NONE
     action_button.pressed.connect(_activate_nearby_action)
     root.add_child(action_button)
+    action_button.mouse_filter = Control.MOUSE_FILTER_STOP
     var close := Button.new()
     close.text = "Закрыть"
     close.pressed.connect(_toggle_bag)
@@ -735,37 +736,44 @@ func _activate_nearby_action() -> void:
     _update_nearby_action()
 
 func _update_nearby_action() -> void:
-    if action_button == null or camera == null or player == null:
+    if action_button == null or player == null:
         return
-    action_button.visible = false
+    var here := Vector2(player.global_position.x, player.global_position.z)
     nearby_action_kind = ""
+    action_button.visible = false
     if bag_panel.visible or craft_panel.visible or sleep_panel.visible or sleep_in_progress:
         return
-    var here := Vector2(player.position.x, player.position.z)
-    var world_pos := Vector3.ZERO
+
+    # Действие доступно ТОЛЬКО вблизи объекта.
     if here.distance_to(FIRE_POS) <= 4.0:
         nearby_action_kind = "cook"
         action_button.text = "🔥 Пожарить мясо"
-        world_pos = Vector3(FIRE_POS.x, 1.8, FIRE_POS.y)
     elif here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 2.5:
         nearby_action_kind = "water"
         action_button.text = "💧 Набрать воды"
-        var shore := LAKE_CENTER + (here - LAKE_CENTER).normalized() * LAKE_RADIUS
-        world_pos = Vector3(shore.x, 1.0, shore.y)
     else:
         var nearest := _nearest_resource()
         if nearest >= 0:
             nearby_action_kind = "resource"
-            var resource_kind: String = resources[nearest]["kind"]
-            action_button.text = "Собрать грибы" if resource_kind == "mushroom" else "Собрать ягоды" if resource_kind == "berry" else "Добыть дерево" if resource_kind == "tree" else "Добыть камень"
-            var spot: Vector2 = resources[nearest]["pos"]
-            world_pos = Vector3(spot.x, 1.65, spot.y)
-    if nearby_action_kind == "" or camera.is_position_behind(world_pos):
-        return
-    var screen_pos := camera.unproject_position(world_pos)
-    var screen_size := get_viewport().get_visible_rect().size
-    action_button.position = Vector2(clampf(screen_pos.x - 95.0, 8.0, screen_size.x - 198.0), clampf(screen_pos.y - 58.0, 90.0, screen_size.y - 110.0))
-    action_button.visible = true
+            var kind: String = resources[nearest]["kind"]
+            if kind == "mushroom":
+                action_button.text = "🍄 Собрать грибы"
+            elif kind == "berry":
+                action_button.text = "🫐 Собрать ягоды"
+            elif kind == "tree":
+                action_button.text = "🪵 Добыть дерево"
+            else:
+                action_button.text = "⛏ Добыть камень"
+
+    if nearby_action_kind != "":
+        # Постоянное положение в нижней части экрана: кнопка не исчезает
+        # за камерой, водой, краем экрана или при вращении камеры.
+        var view_size := get_viewport().get_visible_rect().size
+        action_button.position = Vector2(
+            maxf(8.0, (view_size.x - action_button.size.x) * 0.5),
+            maxf(115.0, view_size.y - 172.0)
+        )
+        action_button.visible = true
 
 func _nearest_resource() -> int:
     var closest := -1
