@@ -290,8 +290,9 @@ func _position_camera(delta: float = 0.0) -> void:
         camera_focus = desired_focus
         camera_initialized = true
     else:
-        camera_focus = camera_focus.lerp(desired_focus, 1.0 - exp(-4.0 * delta))
-    camera_yaw = 0.0  # Постоянный угол в мировых координатах.
+        # Камера плавно догоняет положение персонажа, не реагируя на джойстик или поворот.
+        camera_focus = camera_focus.lerp(desired_focus, 1.0 - exp(-2.0 * delta))
+    camera_yaw = 0.0  # Фиксированный ракурс: никаких поворотов за персонажем.
     var offset := Vector3(sin(camera_yaw) * camera_distance * camera_tilt, camera_distance, cos(camera_yaw) * camera_distance * camera_tilt)
     camera.global_position = camera_focus + offset
     camera.look_at(camera_focus, Vector3.UP)
