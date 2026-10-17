@@ -53,6 +53,8 @@ var gather_direction := Vector2.ZERO
 var camera_input_yaw := 0.0
 var camera_smooth_yaw := 0.0
 var camera_yaw_initialized := false
+var camera_display_distance := 0.0
+var camera_touch_last := Vector2.ZERO
 var joystick_basis_yaw := 0.0
 var active_touches := {}
 var pinch_previous := 0.0
@@ -306,17 +308,19 @@ func _position_camera(delta: float = 0.0) -> void:
         camera_focus = target_focus
         camera_initialized = true
     elif delta > 0.0:
-        camera_focus = camera_focus.lerp(target_focus, 1.0 - exp(-7.0 * delta))
-    else:
-        camera_focus = target_focus
+        camera_focus = camera_focus.lerp(target_focus, 1.0 - exp(-5.0 * delta))
     # Поворот камеры плавный даже при резком свайпе правым пальцем.
     if not camera_yaw_initialized:
         camera_smooth_yaw = camera_input_yaw
         camera_yaw_initialized = true
     elif delta > 0.0:
         camera_smooth_yaw = lerp_angle(camera_smooth_yaw, camera_input_yaw, 1.0 - exp(-2.0 * delta))
+    if camera_display_distance <= 0.0:
+        camera_display_distance = camera_distance
+    elif delta > 0.0:
+        camera_display_distance = lerpf(camera_display_distance, camera_distance, 1.0 - exp(-5.0 * delta))
     var backward := Vector3(sin(camera_smooth_yaw), 0.0, cos(camera_smooth_yaw))
-    camera.global_position = camera_focus + backward * camera_distance * camera_tilt + Vector3.UP * camera_distance
+    camera.global_position = camera_focus + backward * camera_display_distance * camera_tilt + Vector3.UP * camera_display_distance
     camera.look_at(camera_focus, Vector3.UP)
 
 func _is_lake(pos: Vector2, margin := 0.0) -> bool:
@@ -662,7 +666,7 @@ func _toggle_bag() -> void:
 
 func _zoom(amount: float) -> void:
     camera_distance = clampf(camera_distance + amount, 5.5, 32.0)
-    _position_camera()
+    # Обновление камеры только в физическом кадре: без скачка при нажатии кнопки.
     _update_ui()
 
 func _update_ui() -> void:
@@ -1024,6 +1028,7 @@ func _input(event: InputEvent) -> void:
             elif event.position.y > viewport_height * 0.25 and event.position.x >= viewport_width * 0.5 and gather_touch == -1:
                 gather_touch = event.index
                 gather_origin = event.position
+                camera_touch_last = event.position
                 gather_direction = Vector2.ZERO
         else:
             active_touches.erase(event.index)
@@ -1040,11 +1045,16 @@ func _input(event: InputEvent) -> void:
             elif active_touches.is_empty() and not (event.position.y < 70.0 and absf(event.position.x - get_viewport().get_visible_rect().size.x * 0.5) < 80.0):
                 _tap_world(event.position)
     elif event is InputEventScreenDrag:
-        active_touches[event.index] = event.position
+        # Пальцы независимы: левый всегда двигает героя, правый — камеру.
+        # Используем координаты КОНКРЕТНОГО пальца, не event.relative,
+        # который в мобильном браузере может прыгать при двух касаниях.
         if event.index == joystick_touch:
             touch_move = ((event.position - joystick_origin) / 65.0).limit_length(1.0)
         elif event.index == gather_touch:
-            camera_input_yaw -= event.relative.x * 0.003
+            var swipe_x: float = clampf(event.position.x - camera_touch_last.x, -22.0, 22.0)
+            camera_input_yaw -= swipe_x * 0.0022
+            camera_touch_last = event.position
+        active_touches[event.index] = event.position
 
 func _unhandled_input(event: InputEvent) -> void:
     if event is InputEventMouseButton and event.pressed:
