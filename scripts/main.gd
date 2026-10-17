@@ -291,7 +291,7 @@ func _position_camera(delta: float = 0.0) -> void:
         camera_initialized = true
     else:
         camera_focus = camera_focus.lerp(desired_focus, 1.0 - exp(-4.0 * delta))
-    camera_yaw = 0.0  # Фиксированный ракурс: камера не вращается при поворотах персонажа.
+    camera_yaw = 0.0  # Постоянный угол в мировых координатах.
     var offset := Vector3(sin(camera_yaw) * camera_distance * camera_tilt, camera_distance, cos(camera_yaw) * camera_distance * camera_tilt)
     camera.global_position = camera_focus + offset
     camera.look_at(camera_focus, Vector3.UP)
@@ -681,18 +681,18 @@ func _physics_process(delta: float) -> void:
                 status_message = "Отдыхаем у костра — двигайся, чтобы встать"
             pending_index = -1
             pending_kind = ""
-    # Управление как у персонажа от третьего лица: горизонталь РУЛИТ,
-    # вертикаль ведёт вперёд/назад. Камера закреплена за спиной.
+    # Джойстик задаёт абсолютное направление движения на экране.
+    # Камера имеет фиксированный мировой ракурс и не зависит от поворота игрока.
     var direction := Vector2.ZERO
     var steering_active := joystick_touch != -1 and touch_move.length() > 0.12
     if steering_active:
-        # Право на экране = поворот вправо; лево = поворот влево.
-        # При полном отклонении поворот ~100 градусов в секунду.
-        player_facing -= touch_move.x * 1.75 * delta
-        player_facing = wrapf(player_facing, -PI, PI)
-        var forward := Vector2(-sin(player_facing), -cos(player_facing))
-        direction = forward * -touch_move.y
-        # При диагональном отклонении персонаж бежит и плавно поворачивает.
+        direction = touch_move
+        # Траектория меняется сразу, модель плавно разворачивается вслед за ней.
+        var desired_facing := atan2(-direction.x, -direction.y)
+        player_facing = lerp_angle(player_facing, desired_facing, 1.0 - exp(-14.0 * delta))
+        # Ручное управление отменяет автоподход к выбранному объекту.
+        pending_index = -1
+        pending_kind = ""
     elif pending_index >= 0 and joystick_touch == -1:
         var towards := pending_pos - Vector2(player.position.x, player.position.z)
         if towards.length() > 1.95:
