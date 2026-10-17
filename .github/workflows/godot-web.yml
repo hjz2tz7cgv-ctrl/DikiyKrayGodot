@@ -74,6 +74,15 @@ jobs:
       - name: Import project
         run: godot --headless --path . --editor --import
 
+      - name: Check game startup and GDScript errors
+        run: |
+          set -o pipefail
+          timeout 60s godot --headless --path . --quit-after 60 2>&1 | tee godot-startup.log
+          if grep -E -i 'SCRIPT ERROR|Parse Error|Parser Error|Failed to load script|Invalid call|Invalid access|ERROR:' godot-startup.log; then
+            echo "Godot reported an error while starting the game. See the lines above."
+            exit 1
+          fi
+
       - name: Export game
         run: |
           mkdir -p web
