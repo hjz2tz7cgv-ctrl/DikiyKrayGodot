@@ -22,7 +22,15 @@ var mining_active := false
 var touch_move := Vector2.ZERO
 var joystick_touch := -1
 var joystick_origin := Vector2.ZERO
-var mine_touch := -1
+var active_touches := {}
+var pinch_previous := 0.0
+var pending_kind := ""
+var pending_index := -1
+var pending_pos := Vector2.ZERO
+var pickup_flight := {}
+var pickup_time := 0.0
+var bag_button: Button
+var bag_fly: Label
 var hud: CanvasLayer
 var info_label: Label
 var progress_bar: ProgressBar
@@ -197,40 +205,11 @@ func _create_ui() -> void:
     info_label.add_theme_font_size_override("font_size", 24)
     info_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     top.add_child(info_label)
-    var bag_button := Button.new()
+    bag_button = Button.new()
     bag_button.text = "🎒 Рюкзак"
     bag_button.custom_minimum_size = Vector2(145, 56)
     bag_button.pressed.connect(_toggle_bag)
     top.add_child(bag_button)
-    var right := VBoxContainer.new()
-    right.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
-    right.offset_left = -170
-    right.offset_right = -14
-    right.offset_top = -155
-    right.offset_bottom = 165
-    right.add_theme_constant_override("separation", 10)
-    root.add_child(right)
-    action_button = Button.new()
-    action_button.text = "⛏ Удерживать"
-    action_button.custom_minimum_size = Vector2(155, 76)
-    action_button.button_down.connect(_start_mining)
-    action_button.button_up.connect(_stop_mining)
-    right.add_child(action_button)
-    var pickup := Button.new()
-    pickup.text = "Подобрать"
-    pickup.custom_minimum_size = Vector2(155, 65)
-    pickup.pressed.connect(_pickup)
-    right.add_child(pickup)
-    var zoom_in := Button.new()
-    zoom_in.text = "＋ Камера"
-    zoom_in.custom_minimum_size = Vector2(155, 58)
-    zoom_in.pressed.connect(func(): _zoom(-2.0))
-    right.add_child(zoom_in)
-    var zoom_out := Button.new()
-    zoom_out.text = "－ Камера"
-    zoom_out.custom_minimum_size = Vector2(155, 58)
-    zoom_out.pressed.connect(func(): _zoom(2.0))
-    right.add_child(zoom_out)
     var bottom := VBoxContainer.new()
     bottom.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
     bottom.offset_left = 210
@@ -238,6 +217,11 @@ func _create_ui() -> void:
     bottom.offset_top = -92
     bottom.offset_bottom = -15
     root.add_child(bottom)
+    bag_fly = Label.new()
+    bag_fly.visible = false
+    bag_fly.add_theme_font_size_override("font_size", 27)
+    bag_fly.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    root.add_child(bag_fly)
     zoom_label = Label.new()
     zoom_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     zoom_label.add_theme_font_size_override("font_size", 19)
@@ -276,7 +260,7 @@ func _zoom(amount: float) -> void:
 
 func _update_ui() -> void:
     info_label.text = "ДИКИЙ КРАЙ 3D   |   " + status_message
-    zoom_label.text = "Слева — движение  •  Камера: %.0f" % camera_distance
+    zoom_label.text = "Слева — движение  •  Нажми на предмет  •  Два пальца — масштаб"
     bag_label.text = "🎒 РЮКЗАК\n\n🪵 Дерево: %d\n🪨 Камень: %d\n🫐 Ягоды: %d" % [inventory["wood"], inventory["stone"], inventory["berry"]]
 
 func _nearest_resource() -> int:
@@ -292,14 +276,45 @@ func _nearest_resource() -> int:
             closest = i
     return closest
 
-func _start_mining() -> void:
-    target_resource = _nearest_resource()
-    mining_active = target_resource >= 0
+func _tap_world(screen: Vector2) -> void:
+    if camera == null or bag_panel.visible:
+        return
+    var origin := camera.project_ray_origin(screen)
+    var ray_dir := camera.project_ray_normal(screen)
+    if absf(ray_dir.y) < 0.001:
+        return
+    var ground := origin + ray_dir * (-origin.y / ray_dir.y)
+    var pos := Vector2(ground.x, ground.z)
+    var best := 1.65
+    pending_kind = ""
+    pending_index = -1
+    for i in range(drops.size()):
+        var dist: float = pos.distance_to(drops[i]["pos"])
+        if dist < best:
+            best = dist
+            pending_kind = "drop"
+            pending_index = i
+    if pending_kind == "":
+        best = 2.0
+        for i in range(resources.size()):
+            if not resources[i]["alive"]:
+                continue
+            var dist: float = pos.distance_to(resources[i]["pos"])
+            if dist < best:
+                best = dist
+                pending_kind = "resource"
+                pending_index = i
+    if pending_index < 0:
+        return
+    pending_pos = drops[pending_index]["pos"] if pending_kind == "drop" else resources[pending_index]["pos"]
+    status_message = "Подходим к предмету…"
+    _update_ui()
+
+func _begin_mining(index: int) -> void:
+    target_resource = index
+    mining_active = true
     mining_progress = 0.0
-    if not mining_active:
-        status_message = "Подойдите ближе к ресурсу"
-    else:
-        status_message = "Добываем ресурс…"
+    status_message = "Добываем ресурс…"
     _update_ui()
 
 func _stop_mining() -> void:
@@ -321,22 +336,43 @@ func _finish_mining() -> void:
     add_child(drop)
     _mesh_sphere(drop, 0.28, Vector3.ZERO, Color("bd8b52") if kind == "wood" else Color("c0c5c8") if kind == "stone" else Color("bd394e"))
     drops.append({"kind": kind, "pos": r["pos"], "node": drop})
-    status_message = "Ресурс выпал! Нажмите «Подобрать»"
+    status_message = "Ресурс выпал — нажми на него"
     _stop_mining()
     _update_ui()
 
-func _pickup() -> void:
-    var p := Vector2(player.position.x, player.position.z)
-    var picked := 0
-    for i in range(drops.size() - 1, -1, -1):
-        if p.distance_to(drops[i]["pos"]) < 3.0:
-            var kind: String = drops[i]["kind"]
-            inventory[kind] += 1
-            drops[i]["node"].queue_free()
-            drops.remove_at(i)
-            picked += 1
-    status_message = "Подобрано: %d" % picked if picked > 0 else "Нет выпавших предметов рядом"
+func _pickup_index(index: int) -> void:
+    if index < 0 or index >= drops.size():
+        return
+    var item: Dictionary = drops[index]
+    var world_pos: Vector3 = item["node"].global_position
+    var start: Vector2 = camera.unproject_position(world_pos)
+    pickup_flight = {"kind": item["kind"], "start": start}
+    pickup_time = 0.0
+    bag_fly.text = "● +1"
+    bag_fly.position = start
+    bag_fly.visible = true
+    item["node"].queue_free()
+    drops.remove_at(index)
+    status_message = "Предмет летит в рюкзак…"
     _update_ui()
+
+func _animate_pickup(delta: float) -> void:
+    if pickup_flight.is_empty():
+        return
+    pickup_time += delta
+    var t := clampf(pickup_time / 0.65, 0.0, 1.0)
+    var end := bag_button.get_global_rect().get_center()
+    var start: Vector2 = pickup_flight["start"]
+    bag_fly.position = start.lerp(end, t) + Vector2(0, -75.0 * sin(t * PI))
+    bag_fly.scale = Vector2.ONE * (1.0 - 0.35 * t)
+    if t >= 1.0:
+        var kind: String = pickup_flight["kind"]
+        inventory[kind] += 1
+        pickup_flight.clear()
+        bag_fly.visible = false
+        bag_fly.scale = Vector2.ONE
+        status_message = "В рюкзаке: +1 " + kind
+        _update_ui()
 
 func _blocked(pos: Vector2, radius: float) -> bool:
     if absf(pos.x) > WORLD_LIMIT or absf(pos.y) > WORLD_LIMIT:
@@ -350,7 +386,21 @@ func _blocked(pos: Vector2, radius: float) -> bool:
     return false
 
 func _physics_process(delta: float) -> void:
+    _animate_pickup(delta)
+    if pending_index >= 0:
+        var here := Vector2(player.position.x, player.position.z)
+        if here.distance_to(pending_pos) <= 2.25:
+            if pending_kind == "resource" and pending_index < resources.size() and resources[pending_index]["alive"]:
+                _begin_mining(pending_index)
+            elif pending_kind == "drop" and pending_index < drops.size():
+                _pickup_index(pending_index)
+            pending_index = -1
+            pending_kind = ""
     var direction := touch_move
+    if pending_index >= 0 and joystick_touch == -1:
+        var towards := pending_pos - Vector2(player.position.x, player.position.z)
+        if towards.length() > 1.95:
+            direction = towards.normalized()
     direction += Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
     direction = direction.limit_length(1.0)
     var current := Vector2(player.position.x, player.position.z)
@@ -365,7 +415,7 @@ func _physics_process(delta: float) -> void:
     player.position.z = current.y
     _position_camera()
     if mining_active:
-        if target_resource < 0 or not resources[target_resource]["alive"] or _nearest_resource() != target_resource:
+        if target_resource < 0 or not resources[target_resource]["alive"] or Vector2(player.position.x, player.position.z).distance_to(resources[target_resource]["pos"]) > 2.85:
             _stop_mining()
             status_message = "Слишком далеко — добыча прервана"
             _update_ui()
@@ -393,17 +443,41 @@ func _move_animals(delta: float) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
     if event is InputEventScreenTouch:
-        var half := get_viewport().get_visible_rect().size.x * 0.5
-        if event.pressed and event.position.x < half and joystick_touch == -1:
-            joystick_touch = event.index
-            joystick_origin = event.position
-        elif not event.pressed and event.index == joystick_touch:
-            joystick_touch = -1
-            touch_move = Vector2.ZERO
-    elif event is InputEventScreenDrag and event.index == joystick_touch:
-        touch_move = ((event.position - joystick_origin) / 65.0).limit_length(1.0)
+        if event.pressed:
+            active_touches[event.index] = event.position
+            if active_touches.size() == 1 and event.position.x < get_viewport().get_visible_rect().size.x * 0.46:
+                joystick_touch = event.index
+                joystick_origin = event.position
+            if active_touches.size() == 2:
+                touch_move = Vector2.ZERO
+                joystick_touch = -1
+                var pts := active_touches.values()
+                pinch_previous = (pts[0] as Vector2).distance_to(pts[1] as Vector2)
+        else:
+            active_touches.erase(event.index)
+            if event.index == joystick_touch:
+                joystick_touch = -1
+                touch_move = Vector2.ZERO
+                if event.position.distance_to(joystick_origin) < 18.0:
+                    _tap_world(event.position)
+            elif active_touches.is_empty() and pinch_previous <= 0.0:
+                _tap_world(event.position)
+            if active_touches.size() < 2:
+                pinch_previous = 0.0
+    elif event is InputEventScreenDrag:
+        active_touches[event.index] = event.position
+        if active_touches.size() == 2:
+            var pts := active_touches.values()
+            var new_distance: float = (pts[0] as Vector2).distance_to(pts[1] as Vector2)
+            if pinch_previous > 0.0:
+                _zoom((pinch_previous - new_distance) * 0.035)
+            pinch_previous = new_distance
+        elif event.index == joystick_touch:
+            touch_move = ((event.position - joystick_origin) / 65.0).limit_length(1.0)
     elif event is InputEventMouseButton and event.pressed:
         if event.button_index == MOUSE_BUTTON_WHEEL_UP:
             _zoom(-1.0)
         elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
             _zoom(1.0)
+        elif event.button_index == MOUSE_BUTTON_LEFT:
+            _tap_world(event.position)
