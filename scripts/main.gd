@@ -30,7 +30,11 @@ var resources: Array[Dictionary] = []
 var drops: Array[Dictionary] = []
 var animals: Array[Dictionary] = []
 var scenery: Array[Node3D] = []
-var inventory := {"wood": 0, "stone": 0, "berry": 0, "meat": 0, "hide": 0}
+var inventory := {"wood": 0, "stone": 0, "berry": 0, "meat": 0, "hide": 0, "mushroom": 0, "cooked_meat": 0}
+var hunger := 100.0
+var thirst := 100.0
+var survival_label: Label
+var survival_buttons: Array[Button] = []
 var has_spear := false
 var hunt_target := -1
 var attack_cooldown := 0.0
@@ -291,27 +295,20 @@ func _create_camera() -> void:
     _position_camera(0.016)
 
 func _position_camera(delta: float = 0.0) -> void:
-    if camera == null or player == null or player_visual == null:
+    if camera == null or player == null:
         return
-    # Камера смотрит за спину персонажа, но её угол сглаживается отдельно.
-    # Джойстик не вращает камеру напрямую.
-    var facing: float = player_visual.rotation.y
+    # Фиксированный угол: персонаж НЕ поворачивает камеру.
+    # Камера следует за положением героя, угол меняется только свайпом справа.
     var target_focus := player.global_position + Vector3(0.0, 0.35, 0.0)
     if not camera_initialized:
-        camera_follow_yaw = facing
         camera_focus = target_focus
         camera_initialized = true
     elif delta > 0.0:
-        # Плавный доворот даже при резком развороте персонажа на 180 градусов.
-        camera_follow_yaw = lerp_angle(camera_follow_yaw, facing, 1.0 - exp(-0.72 * delta))
-        camera_focus = camera_focus.lerp(target_focus, 1.0 - exp(-1.8 * delta))
-    var backward := Vector3(-sin(camera_follow_yaw), 0.0, cos(camera_follow_yaw))
-    var target_position := camera_focus + backward * camera_distance * camera_tilt + Vector3.UP * camera_distance
-    if delta <= 0.0:
-        # Масштабирование двумя пальцами меняет расстояние сразу, без рывка угла.
-        camera.global_position = target_position
+        camera_focus = camera_focus.lerp(target_focus, 1.0 - exp(-7.0 * delta))
     else:
-        camera.global_position = camera.global_position.lerp(target_position, 1.0 - exp(-1.35 * delta))
+        camera_focus = target_focus
+    var backward := Vector3(sin(camera_input_yaw), 0.0, cos(camera_input_yaw))
+    camera.global_position = camera_focus + backward * camera_distance * camera_tilt + Vector3.UP * camera_distance
     camera.look_at(camera_focus, Vector3.UP)
 
 func _is_lake(pos: Vector2, margin := 0.0) -> bool:
@@ -381,6 +378,18 @@ func _create_resources() -> void:
         for j in range(4):
             _mesh_sphere(bush, 0.1, Vector3(rng.randf_range(-0.35, 0.35), 0.65, rng.randf_range(-0.35, 0.35)), Color("c64248"))
         resources.append({"kind": "berry", "pos": pos, "node": bush, "duration": 1.3, "alive": true})
+
+    # Съедобные грибы: отдельные лесные ресурсы.
+    for i in range(32):
+        var pos := _random_land_pos()
+        if not _can_place(pos, 0.35):
+            continue
+        var mushroom := Node3D.new()
+        mushroom.position = Vector3(pos.x, 0, pos.y)
+        add_child(mushroom)
+        _mesh_box(mushroom, Vector3(0.13, 0.32, 0.13), Vector3(0, 0.16, 0), Color("e8d9b4"))
+        _mesh_sphere(mushroom, 0.27, Vector3(0, 0.37, 0), Color("b76b3e"), Vector3(1.0, 0.48, 1.0))
+        resources.append({"kind": "mushroom", "pos": pos, "node": mushroom, "duration": 1.2, "alive": true})
 
 func _create_scenery() -> void:
     # Небольшие декоративные поляны и цветы, не блокирующие движение.
@@ -483,15 +492,31 @@ func _create_ui() -> void:
     bag_panel.set_anchors_preset(Control.PRESET_CENTER)
     bag_panel.offset_left = -170
     bag_panel.offset_right = 170
-    bag_panel.offset_top = -125
-    bag_panel.offset_bottom = 125
+    bag_panel.offset_top = -235
+    bag_panel.offset_bottom = 235
     bag_panel.visible = false
     root.add_child(bag_panel)
     var bag_col := VBoxContainer.new()
     bag_panel.add_child(bag_col)
+    survival_label = Label.new()
+    survival_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
+    survival_label.offset_left = 20
+    survival_label.offset_top = 74
+    survival_label.offset_right = -20
+    survival_label.offset_bottom = 112
+    survival_label.add_theme_font_size_override("font_size", 20)
+    survival_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    root.add_child(survival_label)
     bag_label = Label.new()
     bag_label.add_theme_font_size_override("font_size", 25)
     bag_col.add_child(bag_label)
+    for entry in [["Съесть ягоды", "berry"], ["Съесть гриб", "mushroom"], ["Съесть жареное мясо", "cooked_meat"], ["Пожарить мясо у костра", "cook"], ["Набрать воды у озера", "water"]]:
+        var use_button := Button.new()
+        use_button.text = entry[0]
+        use_button.custom_minimum_size.y = 43
+        use_button.pressed.connect(_survival_action.bind(entry[1]))
+        bag_col.add_child(use_button)
+        survival_buttons.append(use_button)
     var close := Button.new()
     close.text = "Закрыть"
     close.pressed.connect(_toggle_bag)
@@ -600,15 +625,49 @@ func _zoom(amount: float) -> void:
 
 func _update_ui() -> void:
     info_label.text = "ДИКИЙ КРАЙ 3D   |   " + status_message
+    if survival_label != null:
+        survival_label.text = "🍖 Голод: %d%%    💧 Жажда: %d%%" % [int(hunger), int(thirst)]
     if time_label != null:
         var hour := int(day_clock) % 24
         var minute := int((day_clock - floor(day_clock)) * 60.0)
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
     zoom_label.text = "Слева — ходьба  •  Справа — добыча  •  Нажми на предмет"
-    bag_label.text = "РЮКЗАК\nДерево: %d  Камень: %d\nЯгоды: %d  Мясо: %d  Шкуры: %d\nКопьё: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["meat"], inventory["hide"], "есть" if has_spear else "нет"]
+    bag_label.text = "РЮКЗАК\\nДерево: %d  Камень: %d\\nЯгоды: %d  Грибы: %d\\nМясо: %d  Жареное: %d  Шкуры: %d\\nКопьё: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["mushroom"], inventory["meat"], inventory["cooked_meat"], inventory["hide"], "есть" if has_spear else "нет"]
     if craft_recipe_button != null:
         craft_recipe_button.text = "Копьё уже создано" if has_spear else "Создать копьё (3 дерева + 1 камень)"
         craft_recipe_button.disabled = has_spear or inventory["wood"] < 3 or inventory["stone"] < 1
+
+func _survival_action(kind: String) -> void:
+    var here := Vector2(player.position.x, player.position.z)
+    if kind == "water":
+        if here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 2.5:
+            thirst = minf(100.0, thirst + 65.0)
+            status_message = "Фляга наполнена — ты попил воды"
+        else:
+            status_message = "Подойди к берегу озера"
+    elif kind == "cook":
+        if here.distance_to(FIRE_POS) > 4.0:
+            status_message = "Готовить мясо можно только у костра"
+        elif inventory["meat"] < 1 or inventory["wood"] < 1:
+            status_message = "Для жарки нужны 1 мясо и 1 дерево"
+        else:
+            inventory["meat"] -= 1
+            inventory["wood"] -= 1
+            inventory["cooked_meat"] += 1
+            status_message = "Мясо приготовлено!"
+    elif inventory.get(kind, 0) <= 0:
+        status_message = "Такой еды пока нет в рюкзаке"
+    else:
+        inventory[kind] -= 1
+        if kind == "berry":
+            hunger = minf(100.0, hunger + 12.0)
+            thirst = minf(100.0, thirst + 4.0)
+        elif kind == "mushroom":
+            hunger = minf(100.0, hunger + 18.0)
+        elif kind == "cooked_meat":
+            hunger = minf(100.0, hunger + 42.0)
+        status_message = "Ты поел"
+    _update_ui()
 
 func _nearest_resource() -> int:
     var closest := -1
@@ -709,7 +768,7 @@ func _finish_mining() -> void:
     for i in range(obstacles.size() - 1, -1, -1):
         if obstacles[i]["node"] == r["node"]:
             obstacles.remove_at(i)
-    var kind: String = "wood" if r["kind"] == "tree" else "stone" if r["kind"] == "rock" else "berry"
+    var kind: String = "wood" if r["kind"] == "tree" else "stone" if r["kind"] == "rock" else "mushroom" if r["kind"] == "mushroom" else "berry"
     var drop := Node3D.new()
     drop.position = Vector3(r["pos"].x, 0.35, r["pos"].y)
     add_child(drop)
@@ -769,6 +828,8 @@ func _physics_process(delta: float) -> void:
         _advance_sleep(delta)
         return
     _animate_camp(delta)
+    hunger = maxf(0.0, hunger - delta * 0.035)
+    thirst = maxf(0.0, thirst - delta * 0.055)
     day_clock += delta * 24.0 / DAY_SECONDS
     if day_clock >= 24.0:
         day_clock -= 24.0
@@ -847,7 +908,8 @@ func _physics_process(delta: float) -> void:
     # Камера ориентируется на реальный поворот модели, а не на касание.
 
     var current := Vector2(player.position.x, player.position.z)
-    var motion := direction * WALK_SPEED * delta
+    var survival_speed := 0.65 if hunger <= 0.0 or thirst <= 0.0 else 1.0
+    var motion := direction * WALK_SPEED * survival_speed * delta
     var next_x := current + Vector2(motion.x, 0)
     if not _blocked(next_x, PLAYER_RADIUS):
         current.x = next_x.x
@@ -922,12 +984,12 @@ func _input(event: InputEvent) -> void:
                 return
             var viewport_width := get_viewport().get_visible_rect().size.x
             var viewport_height := get_viewport().get_visible_rect().size.y
-            if event.position.y > viewport_height * 0.46 and event.position.x < viewport_width * 0.46 and joystick_touch == -1:
+            if event.position.y > viewport_height * 0.32 and event.position.x < viewport_width * 0.5 and joystick_touch == -1:
                 joystick_touch = event.index
                 joystick_origin = event.position
-                joystick_basis_yaw = player_facing
+                joystick_basis_yaw = camera_input_yaw
                 touch_move = Vector2.ZERO
-            elif event.position.y > viewport_height * 0.46 and event.position.x > viewport_width * 0.54 and gather_touch == -1:
+            elif event.position.y > viewport_height * 0.25 and event.position.x >= viewport_width * 0.5 and gather_touch == -1:
                 gather_touch = event.index
                 gather_origin = event.position
                 gather_direction = Vector2.ZERO
@@ -947,7 +1009,6 @@ func _input(event: InputEvent) -> void:
             elif event.index == gather_touch:
                 gather_touch = -1
                 gather_direction = Vector2.ZERO
-                _stop_mining()
                 if event.position.distance_to(gather_origin) < 18.0:
                     _tap_world(event.position)
             elif active_touches.is_empty():
@@ -974,7 +1035,9 @@ func _input(event: InputEvent) -> void:
         if event.index == joystick_touch:
             touch_move = ((event.position - joystick_origin) / 65.0).limit_length(1.0)
         elif event.index == gather_touch:
-            gather_direction = ((event.position - gather_origin) / 65.0).limit_length(1.0)
+            # Правая половина — свободный поворот камеры пальцем.
+            camera_input_yaw -= event.relative.x * 0.005
+            _position_camera()
 
 func _unhandled_input(event: InputEvent) -> void:
     if event is InputEventMouseButton and event.pressed:
