@@ -33,7 +33,9 @@ var inventory := {"wood": 0, "stone": 0, "berry": 0, "meat": 0, "hide": 0}
 var has_spear := false
 var hunt_target := -1
 var attack_cooldown := 0.0
-var spear_button: Button
+var craft_button: Button
+var craft_panel: PanelContainer
+var craft_recipe_button: Button
 var target_resource := -1
 var mining_progress := 0.0
 var mining_active := false
@@ -437,11 +439,11 @@ func _create_ui() -> void:
     bag_button.custom_minimum_size = Vector2(145, 56)
     bag_button.pressed.connect(_toggle_bag)
     top.add_child(bag_button)
-    spear_button = Button.new()
-    spear_button.text = "Копьё: 3 дерева + 1 камень"
-    spear_button.custom_minimum_size = Vector2(185, 56)
-    spear_button.pressed.connect(_craft_spear)
-    top.add_child(spear_button)
+    craft_button = Button.new()
+    craft_button.text = "Крафт"
+    craft_button.custom_minimum_size = Vector2(110, 56)
+    craft_button.pressed.connect(_toggle_craft)
+    top.add_child(craft_button)
     time_label = Label.new()
     time_label.add_theme_font_size_override("font_size", 20)
     top.add_child(time_label)
@@ -483,6 +485,35 @@ func _create_ui() -> void:
     close.text = "Закрыть"
     close.pressed.connect(_toggle_bag)
     bag_col.add_child(close)
+    # Отдельное окно крафта: ресурсы расходуются только по кнопке «Создать».
+    craft_panel = PanelContainer.new()
+    craft_panel.set_anchors_preset(Control.PRESET_CENTER)
+    craft_panel.offset_left = -190
+    craft_panel.offset_right = 190
+    craft_panel.offset_top = -125
+    craft_panel.offset_bottom = 125
+    craft_panel.visible = false
+    root.add_child(craft_panel)
+    var craft_col := VBoxContainer.new()
+    craft_panel.add_child(craft_col)
+    var craft_title := Label.new()
+    craft_title.text = "МАСТЕРСКАЯ\nДеревянное копьё"
+    craft_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    craft_title.add_theme_font_size_override("font_size", 25)
+    craft_col.add_child(craft_title)
+    var craft_description := Label.new()
+    craft_description.text = "Для охоты\nНужно: 3 дерева и 1 камень"
+    craft_description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    craft_col.add_child(craft_description)
+    craft_recipe_button = Button.new()
+    craft_recipe_button.custom_minimum_size.y = 55
+    craft_recipe_button.pressed.connect(_craft_spear)
+    craft_col.add_child(craft_recipe_button)
+    var craft_close := Button.new()
+    craft_close.text = "Закрыть"
+    craft_close.custom_minimum_size.y = 48
+    craft_close.pressed.connect(_toggle_craft)
+    craft_col.add_child(craft_close)
     sleep_panel = PanelContainer.new()
     sleep_panel.set_anchors_preset(Control.PRESET_CENTER)
     sleep_panel.offset_left = -190
@@ -511,6 +542,13 @@ func _create_ui() -> void:
     sleep_fade.color = Color(0, 0, 0, 0)
     sleep_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
     root.add_child(sleep_fade)
+
+func _toggle_craft() -> void:
+    craft_panel.visible = not craft_panel.visible
+    if craft_panel.visible:
+        bag_panel.visible = false
+        sleep_panel.visible = false
+    _update_ui()
 
 func _craft_spear() -> void:
     if has_spear:
@@ -557,7 +595,9 @@ func _update_ui() -> void:
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
     zoom_label.text = "Слева — ходьба  •  Справа — добыча  •  Нажми на предмет"
     bag_label.text = "РЮКЗАК\nДерево: %d  Камень: %d\nЯгоды: %d  Мясо: %d  Шкуры: %d\nКопьё: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["meat"], inventory["hide"], "есть" if has_spear else "нет"]
-    spear_button.text = "Копьё готово" if has_spear else "Копьё: 3 дерева + 1 камень"
+    if craft_recipe_button != null:
+        craft_recipe_button.text = "Копьё уже создано" if has_spear else "Создать копьё (3 дерева + 1 камень)"
+        craft_recipe_button.disabled = has_spear or inventory["wood"] < 3 or inventory["stone"] < 1
 
 func _nearest_resource() -> int:
     var closest := -1
