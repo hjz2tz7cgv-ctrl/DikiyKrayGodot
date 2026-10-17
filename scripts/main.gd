@@ -788,7 +788,7 @@ func _update_nearby_action() -> void:
         return
     var here := Vector2(player.global_position.x, player.global_position.z)
     var near_object := here.distance_to(FIRE_POS) <= 4.0 or here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 2.5 or _nearest_resource() >= 0
-    var has_food := inventory.get("berry", 0) > 0 or inventory.get("mushroom", 0) > 0 or inventory.get("cooked_meat", 0) > 0
+    var has_food: bool = int(inventory.get("berry", 0)) > 0 or int(inventory.get("mushroom", 0)) > 0 or int(inventory.get("cooked_meat", 0)) > 0
     if near_object or has_food:
         var view_size := get_viewport().get_visible_rect().size
         action_button.text = "Действие"
