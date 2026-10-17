@@ -49,6 +49,7 @@ var camera_input_yaw := 0.0
 var joystick_basis_yaw := 0.0
 var active_touches := {}
 var pinch_previous := 0.0
+var pinch_in_progress := false
 var pending_kind := ""
 var pending_index := -1
 var pending_pos := Vector2.ZERO
@@ -296,9 +297,10 @@ func _position_camera(delta: float = 0.0) -> void:
         camera_focus = desired_focus
         camera_initialized = true
     else:
-        # Камера плавно догоняет положение персонажа, не реагируя на джойстик или поворот.
-        camera_focus = camera_focus.lerp(desired_focus, 1.0 - exp(-2.0 * delta))
-    camera_yaw = 0.0  # Фиксированный ракурс: никаких поворотов за персонажем.
+        # Камера следует за положением и фактическим направлением модели игрока.
+        camera_focus = camera_focus.lerp(desired_focus, 1.0 - exp(-2.8 * delta))
+    desired_camera_yaw = -player_facing
+    camera_yaw = lerp_angle(camera_yaw, desired_camera_yaw, 1.0 - exp(-3.0 * delta))
     var offset := Vector3(sin(camera_yaw) * camera_distance * camera_tilt, camera_distance, cos(camera_yaw) * camera_distance * camera_tilt)
     camera.global_position = camera_focus + offset
     camera.look_at(camera_focus, Vector3.UP)
@@ -829,7 +831,7 @@ func _physics_process(delta: float) -> void:
     if sitting:
         direction = Vector2.ZERO
     player_visual.rotation.y = player_facing
-    # Поворот персонажа не влияет на угол камеры.
+    # Камера ориентируется на player_facing, а не на нажатие джойстика.
 
     var current := Vector2(player.position.x, player.position.z)
     var motion := direction * WALK_SPEED * delta
@@ -888,10 +890,23 @@ func _move_animals(delta: float) -> void:
             animal["node"].position.z = new_pos.y
         animals[i] = animal
 
-func _unhandled_input(event: InputEvent) -> void:
+func _input(event: InputEvent) -> void:
     if event is InputEventScreenTouch:
         if event.pressed:
             active_touches[event.index] = event.position
+            # Два пальца имеют приоритет над обоими джойстиками в любой части поля игры.
+            if active_touches.size() >= 2:
+                pinch_in_progress = true
+                joystick_touch = -1
+                touch_move = Vector2.ZERO
+                gather_touch = -1
+                gather_direction = Vector2.ZERO
+                _stop_mining()
+                var pts: Array = active_touches.values()
+                pinch_previous = (pts[0] as Vector2).distance_to(pts[1] as Vector2)
+                return
+            if pinch_in_progress:
+                return
             var viewport_width := get_viewport().get_visible_rect().size.x
             var viewport_height := get_viewport().get_visible_rect().size.y
             if event.position.y > viewport_height * 0.46 and event.position.x < viewport_width * 0.46 and joystick_touch == -1:
@@ -902,11 +917,14 @@ func _unhandled_input(event: InputEvent) -> void:
                 gather_touch = event.index
                 gather_origin = event.position
                 gather_direction = Vector2.ZERO
-            elif active_touches.size() == 2 and joystick_touch == -1 and gather_touch == -1:
-                var pts: Array = active_touches.values()
-                pinch_previous = (pts[0] as Vector2).distance_to(pts[1] as Vector2)
         else:
             active_touches.erase(event.index)
+            if pinch_in_progress:
+                if active_touches.size() < 2:
+                    pinch_previous = 0.0
+                if active_touches.is_empty():
+                    pinch_in_progress = false
+                return
             if event.index == joystick_touch:
                 joystick_touch = -1
                 touch_move = Vector2.ZERO
@@ -918,23 +936,26 @@ func _unhandled_input(event: InputEvent) -> void:
                 _stop_mining()
                 if event.position.distance_to(gather_origin) < 18.0:
                     _tap_world(event.position)
-            elif active_touches.is_empty() and pinch_previous <= 0.0:
+            elif active_touches.is_empty():
                 _tap_world(event.position)
-            if active_touches.size() < 2:
-                pinch_previous = 0.0
     elif event is InputEventScreenDrag:
         active_touches[event.index] = event.position
+        if pinch_in_progress:
+            if active_touches.size() >= 2:
+                var pts: Array = active_touches.values()
+                var new_distance: float = (pts[0] as Vector2).distance_to(pts[1] as Vector2)
+                if pinch_previous > 0.0:
+                    # Раздвинуть пальцы = приблизить камеру.
+                    _zoom((pinch_previous - new_distance) * 0.035)
+                pinch_previous = new_distance
+            return
         if event.index == joystick_touch:
             touch_move = ((event.position - joystick_origin) / 65.0).limit_length(1.0)
         elif event.index == gather_touch:
             gather_direction = ((event.position - gather_origin) / 65.0).limit_length(1.0)
-        elif active_touches.size() == 2 and joystick_touch == -1 and gather_touch == -1:
-            var pts: Array = active_touches.values()
-            var new_distance: float = (pts[0] as Vector2).distance_to(pts[1] as Vector2)
-            if pinch_previous > 0.0:
-                _zoom((pinch_previous - new_distance) * 0.035)
-            pinch_previous = new_distance
-    elif event is InputEventMouseButton and event.pressed:
+
+func _unhandled_input(event: InputEvent) -> void:
+    if event is InputEventMouseButton and event.pressed:
         if event.button_index == MOUSE_BUTTON_WHEEL_UP:
             _zoom(-1.0)
         elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
