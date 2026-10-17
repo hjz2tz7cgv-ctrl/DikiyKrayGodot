@@ -3,9 +3,9 @@ extends Node3D
 # Дикий край — самодостаточный Godot 4 3D прототип для Web/iPhone.
 const WALK_SPEED := 5.0
 const PLAYER_RADIUS := 0.48
-const LAKE_CENTER := Vector2(10.0, -7.0)
-const LAKE_RADIUS := 7.0
-const WORLD_LIMIT := 27.0
+const LAKE_CENTER := Vector2(18.0, -14.0)
+const LAKE_RADIUS := 9.0
+const WORLD_LIMIT := 64.0
 
 var player: CharacterBody3D
 var camera: Camera3D
@@ -15,6 +15,7 @@ var obstacles: Array[Dictionary] = []
 var resources: Array[Dictionary] = []
 var drops: Array[Dictionary] = []
 var animals: Array[Dictionary] = []
+var scenery: Array[Node3D] = []
 var inventory := {"wood": 0, "stone": 0, "berry": 0}
 var target_resource := -1
 var mining_progress := 0.0
@@ -47,6 +48,7 @@ func _ready() -> void:
     _create_player()
     _create_camera()
     _create_resources()
+    _create_scenery()
     _create_animals()
     _create_ui()
     _update_ui()
@@ -80,7 +82,7 @@ func _mesh_sphere(parent: Node3D, radius: float, pos: Vector3, color: Color, sca
     return mi
 
 func _create_world() -> void:
-    _mesh_box(self, Vector3(60, 0.3, 60), Vector3(0, -0.2, 0), Color("628a51"))
+    _mesh_box(self, Vector3(132, 0.3, 132), Vector3(0, -0.2, 0), Color("628a51"))
     var water := _mesh_sphere(self, LAKE_RADIUS, Vector3(LAKE_CENTER.x, -0.15, LAKE_CENTER.y), Color("3d9dc0"), Vector3(1.0, 0.018, 1.0))
     water.name = "Lake"
     var sun := DirectionalLight3D.new()
@@ -139,14 +141,18 @@ func _can_place(pos: Vector2, radius: float) -> bool:
             return false
     return true
 
+func _random_land_pos(edge: float = 59.0) -> Vector2:
+    return Vector2(rng.randf_range(-edge, edge), rng.randf_range(-edge, edge))
+
 func _create_resources() -> void:
-    for i in range(30):
-        var kind := "tree" if i < 19 else "rock"
+    # Больше ресурсов, но без тяжёлых импортированных моделей.
+    for i in range(112):
+        var kind := "tree" if i < 72 else "rock"
         var radius := 0.85 if kind == "tree" else 0.7
         var pos := Vector2.ZERO
         var found := false
-        for attempt in range(80):
-            pos = Vector2(rng.randf_range(-24, 24), rng.randf_range(-24, 24))
+        for attempt in range(90):
+            pos = _random_land_pos()
             if _can_place(pos, radius):
                 found = true
                 break
@@ -156,15 +162,22 @@ func _create_resources() -> void:
         node.position = Vector3(pos.x, 0, pos.y)
         add_child(node)
         if kind == "tree":
-            _mesh_box(node, Vector3(0.55, 2.2, 0.55), Vector3(0, 1.1, 0), Color("765238"))
-            _mesh_sphere(node, 1.25, Vector3(0, 2.55, 0), Color("286e3f"), Vector3(1, 0.85, 1))
-            _mesh_sphere(node, 0.75, Vector3(0.5, 3.05, 0.1), Color("3a8850"))
+            var tall := rng.randf_range(0.85, 1.4)
+            var pine := i % 4 == 0
+            _mesh_box(node, Vector3(0.55, 2.2 * tall, 0.55), Vector3(0, 1.1 * tall, 0), Color("765238"))
+            if pine:
+                _mesh_sphere(node, 1.0, Vector3(0, 2.5 * tall, 0), Color("245e3d"), Vector3(0.8, 1.55 * tall, 0.8))
+                _mesh_sphere(node, 0.73, Vector3(0, 3.35 * tall, 0), Color("307449"), Vector3(0.8, 1.15, 0.8))
+            else:
+                _mesh_sphere(node, 1.25, Vector3(0, 2.55 * tall, 0), Color("286e3f") if i % 3 else Color("47894b"), Vector3(1, 0.85 * tall, 1))
+                _mesh_sphere(node, 0.75, Vector3(0.5, 3.05 * tall, 0.1), Color("3a8850"))
         else:
-            _mesh_sphere(node, 0.88, Vector3(0, 0.55, 0), Color("929c9a"), Vector3(1.1, 0.65, 0.9))
+            var rock_color := Color("929c9a") if i % 3 else Color("777f86")
+            _mesh_sphere(node, rng.randf_range(0.65, 1.05), Vector3(0, 0.55, 0), rock_color, Vector3(1.1, 0.65, 0.9))
         obstacles.append({"pos": pos, "radius": radius, "node": node})
         resources.append({"kind": kind, "pos": pos, "node": node, "duration": 2.4 if kind == "tree" else 3.4, "alive": true})
-    for i in range(13):
-        var pos := Vector2(rng.randf_range(-23, 23), rng.randf_range(-23, 23))
+    for i in range(48):
+        var pos := _random_land_pos()
         if not _can_place(pos, 0.4):
             continue
         var bush := Node3D.new()
@@ -175,17 +188,50 @@ func _create_resources() -> void:
             _mesh_sphere(bush, 0.1, Vector3(rng.randf_range(-0.35, 0.35), 0.65, rng.randf_range(-0.35, 0.35)), Color("c64248"))
         resources.append({"kind": "berry", "pos": pos, "node": bush, "duration": 1.3, "alive": true})
 
+func _create_scenery() -> void:
+    # Небольшие декоративные поляны и цветы, не блокирующие движение.
+    for i in range(95):
+        var pos := _random_land_pos()
+        if _is_lake(pos, 0.5) or pos.length() < 3.0:
+            continue
+        var tuft := Node3D.new()
+        tuft.position = Vector3(pos.x, 0, pos.y)
+        add_child(tuft)
+        var color := Color("8baf58") if i % 4 else Color("e2cf83")
+        _mesh_sphere(tuft, 0.23, Vector3(0, 0.12, 0), color, Vector3(1.0, 0.4, 0.8))
+        scenery.append(tuft)
+
 func _create_animals() -> void:
-    for i in range(5):
-        var pos := Vector2(rng.randf_range(-19, 19), rng.randf_range(-19, 19))
-        if _is_lake(pos, 1.2):
-            pos = Vector2(-10 + i * 2, 10)
+    # Зайцы, олени и кабаны мирно бродят по миру.
+    for i in range(19):
+        var pos := _random_land_pos(53.0)
+        for attempt in range(40):
+            if not _is_lake(pos, 1.5) and not _blocked(pos, 0.8):
+                break
+            pos = _random_land_pos(53.0)
+        if _blocked(pos, 0.8):
+            continue
         var animal := Node3D.new()
         animal.position = Vector3(pos.x, 0, pos.y)
         add_child(animal)
-        _mesh_sphere(animal, 0.58, Vector3(0, 0.65, 0), Color("a88465"), Vector3(1.3, 0.75, 0.7))
-        _mesh_sphere(animal, 0.34, Vector3(0.7, 0.85, 0), Color("c29a77"))
-        animals.append({"node": animal, "pos": pos, "dir": Vector2.RIGHT.rotated(rng.randf_range(0, TAU)), "timer": rng.randf_range(1, 3)})
+        var species := "rabbit" if i % 3 == 0 else "deer" if i % 3 == 1 else "boar"
+        var speed := 1.7 if species == "rabbit" else 1.25 if species == "deer" else 0.9
+        if species == "rabbit":
+            _mesh_sphere(animal, 0.35, Vector3(0, 0.34, 0), Color("c7bba4"), Vector3(1.15, 0.8, 0.8))
+            _mesh_sphere(animal, 0.22, Vector3(0.36, 0.46, 0), Color("d5c9b5"))
+            _mesh_sphere(animal, 0.12, Vector3(0.38, 0.79, -0.13), Color("d5c9b5"), Vector3(0.55, 2.0, 0.5))
+            _mesh_sphere(animal, 0.12, Vector3(0.38, 0.79, 0.13), Color("d5c9b5"), Vector3(0.55, 2.0, 0.5))
+        elif species == "deer":
+            _mesh_sphere(animal, 0.58, Vector3(0, 0.85, 0), Color("ae835f"), Vector3(1.3, 0.75, 0.65))
+            _mesh_sphere(animal, 0.28, Vector3(0.75, 1.05, 0), Color("c49a75"))
+            for z in [-0.34, 0.34]:
+                _mesh_box(animal, Vector3(0.12, 0.75, 0.12), Vector3(-0.35, 0.38, z), Color("76523d"))
+                _mesh_box(animal, Vector3(0.12, 0.75, 0.12), Vector3(0.35, 0.38, z), Color("76523d"))
+        else:
+            _mesh_sphere(animal, 0.62, Vector3(0, 0.6, 0), Color("665044"), Vector3(1.35, 0.8, 0.8))
+            _mesh_sphere(animal, 0.29, Vector3(0.75, 0.64, 0), Color("856859"))
+            _mesh_sphere(animal, 0.16, Vector3(0.98, 0.58, 0), Color("a48477"), Vector3(0.45, 0.8, 1.0))
+        animals.append({"node": animal, "pos": pos, "dir": Vector2.RIGHT.rotated(rng.randf_range(0, TAU)), "timer": rng.randf_range(1.0, 3.0), "speed": speed, "species": species})
 
 func _create_ui() -> void:
     hud = CanvasLayer.new()
@@ -206,7 +252,7 @@ func _create_ui() -> void:
     info_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     top.add_child(info_label)
     bag_button = Button.new()
-    bag_button.text = "🎒 Рюкзак"
+    bag_button.text = "Рюкзак"
     bag_button.custom_minimum_size = Vector2(145, 56)
     bag_button.pressed.connect(_toggle_bag)
     top.add_child(bag_button)
@@ -261,7 +307,7 @@ func _zoom(amount: float) -> void:
 func _update_ui() -> void:
     info_label.text = "ДИКИЙ КРАЙ 3D   |   " + status_message
     zoom_label.text = "Слева — движение  •  Нажми на предмет  •  Два пальца — масштаб"
-    bag_label.text = "🎒 РЮКЗАК\n\n🪵 Дерево: %d\n🪨 Камень: %d\n🫐 Ягоды: %d" % [inventory["wood"], inventory["stone"], inventory["berry"]]
+    bag_label.text = "РЮКЗАК\n\nДерево: %d\nКамень: %d\nЯгоды: %d" % [inventory["wood"], inventory["stone"], inventory["berry"]]
 
 func _nearest_resource() -> int:
     var closest := -1
@@ -433,7 +479,7 @@ func _move_animals(delta: float) -> void:
         if animal["timer"] <= 0:
             animal["timer"] = rng.randf_range(1.0, 3.0)
             animal["dir"] = Vector2.RIGHT.rotated(rng.randf_range(0, TAU))
-        var new_pos: Vector2 = animal["pos"] + animal["dir"] * delta * 1.2
+        var new_pos: Vector2 = animal["pos"] + animal["dir"] * delta * animal["speed"]
         if _blocked(new_pos, 0.5):
             animal["dir"] = -animal["dir"].rotated(rng.randf_range(-0.8, 0.8))
         else:
