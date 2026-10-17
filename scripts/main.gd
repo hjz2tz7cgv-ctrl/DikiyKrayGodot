@@ -73,6 +73,8 @@ var bag_panel: PanelContainer
 var bag_label: Label
 var zoom_label: Label
 var action_button: Button
+var nearby_action_kind := ""
+var nearby_action_position := Vector3.ZERO
 var status_message := "Подойдите к дереву или камню"
 var rng := RandomNumberGenerator.new()
 
@@ -556,13 +558,21 @@ func _create_ui() -> void:
     bag_label = Label.new()
     bag_label.add_theme_font_size_override("font_size", 25)
     bag_col.add_child(bag_label)
-    for entry in [["Съесть ягоды", "berry"], ["Съесть гриб", "mushroom"], ["Съесть жареное мясо", "cooked_meat"], ["Пожарить мясо у костра", "cook"], ["Набрать воды у озера", "water"]]:
+    for entry in [["Съесть ягоды", "berry"], ["Съесть гриб", "mushroom"], ["Съесть жареное мясо", "cooked_meat"],]:
         var use_button := Button.new()
         use_button.text = entry[0]
         use_button.custom_minimum_size.y = 43
         use_button.pressed.connect(_survival_action.bind(entry[1]))
         bag_col.add_child(use_button)
         survival_buttons.append(use_button)
+    # Действия у костра и воды теперь находятся рядом с объектами, не в рюкзаке.
+    action_button = Button.new()
+    action_button.visible = false
+    action_button.custom_minimum_size = Vector2(190, 48)
+    action_button.size = Vector2(190, 48)
+    action_button.focus_mode = Control.FOCUS_NONE
+    action_button.pressed.connect(_activate_nearby_action)
+    root.add_child(action_button)
     var close := Button.new()
     close.text = "Закрыть"
     close.pressed.connect(_toggle_bag)
@@ -714,6 +724,48 @@ func _survival_action(kind: String) -> void:
             hunger = minf(100.0, hunger + 42.0)
         status_message = "Ты поел"
     _update_ui()
+
+func _activate_nearby_action() -> void:
+    if nearby_action_kind == "cook" or nearby_action_kind == "water":
+        _survival_action(nearby_action_kind)
+    elif nearby_action_kind == "resource":
+        var index := _nearest_resource()
+        if index >= 0:
+            _begin_mining(index)
+    _update_nearby_action()
+
+func _update_nearby_action() -> void:
+    if action_button == null or camera == null or player == null:
+        return
+    action_button.visible = false
+    nearby_action_kind = ""
+    if bag_panel.visible or craft_panel.visible or sleep_panel.visible or sleep_in_progress:
+        return
+    var here := Vector2(player.position.x, player.position.z)
+    var world_pos := Vector3.ZERO
+    if here.distance_to(FIRE_POS) <= 4.0:
+        nearby_action_kind = "cook"
+        action_button.text = "🔥 Пожарить мясо"
+        world_pos = Vector3(FIRE_POS.x, 1.8, FIRE_POS.y)
+    elif here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 2.5:
+        nearby_action_kind = "water"
+        action_button.text = "💧 Набрать воды"
+        var shore := LAKE_CENTER + (here - LAKE_CENTER).normalized() * LAKE_RADIUS
+        world_pos = Vector3(shore.x, 1.0, shore.y)
+    else:
+        var nearest := _nearest_resource()
+        if nearest >= 0:
+            nearby_action_kind = "resource"
+            var resource_kind: String = resources[nearest]["kind"]
+            action_button.text = "Собрать грибы" if resource_kind == "mushroom" else "Собрать ягоды" if resource_kind == "berry" else "Добыть дерево" if resource_kind == "tree" else "Добыть камень"
+            var spot: Vector2 = resources[nearest]["pos"]
+            world_pos = Vector3(spot.x, 1.65, spot.y)
+    if nearby_action_kind == "" or camera.is_position_behind(world_pos):
+        return
+    var screen_pos := camera.unproject_position(world_pos)
+    var screen_size := get_viewport().get_visible_rect().size
+    action_button.position = Vector2(clampf(screen_pos.x - 95.0, 8.0, screen_size.x - 198.0), clampf(screen_pos.y - 58.0, 90.0, screen_size.y - 110.0))
+    action_button.visible = true
 
 func _nearest_resource() -> int:
     var closest := -1
@@ -983,6 +1035,7 @@ func _physics_process(delta: float) -> void:
             if mining_progress >= resources[target_resource]["duration"]:
                 _finish_mining()
     _move_animals(delta)
+    _update_nearby_action()
     _update_ui()
 
 func _move_animals(delta: float) -> void:
@@ -1017,6 +1070,9 @@ func _input(event: InputEvent) -> void:
             active_touches[event.index] = event.position
             var viewport_width := get_viewport().get_visible_rect().size.x
             var viewport_height := get_viewport().get_visible_rect().size.y
+            # Не захватываем касания по контекстной кнопке действий.
+            if action_button != null and action_button.visible and Rect2(action_button.global_position, action_button.size).has_point(event.position):
+                return
             # Верхняя центральная область отдана кнопкам + и −.
             if event.position.y < 70.0 and absf(event.position.x - viewport_width * 0.5) < 80.0:
                 return
