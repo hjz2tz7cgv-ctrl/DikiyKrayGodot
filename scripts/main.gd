@@ -291,7 +291,7 @@ func _position_camera(delta: float = 0.0) -> void:
         camera_initialized = true
     else:
         camera_focus = camera_focus.lerp(desired_focus, 1.0 - exp(-4.0 * delta))
-    camera_yaw = lerp_angle(camera_yaw, desired_camera_yaw, 1.0 - exp(-3.0 * delta))
+    camera_yaw = desired_camera_yaw  # Камера закреплена за направлением персонажа: без отката и вращения по кругу.
     var offset := Vector3(sin(camera_yaw) * camera_distance * camera_tilt, camera_distance, cos(camera_yaw) * camera_distance * camera_tilt)
     camera.global_position = camera_focus + offset
     camera.look_at(camera_focus, Vector3.UP)
@@ -681,26 +681,38 @@ func _physics_process(delta: float) -> void:
                 status_message = "Отдыхаем у костра — двигайся, чтобы встать"
             pending_index = -1
             pending_kind = ""
-    # Direction is locked to the camera heading when the movement finger lands.
-    # Rotating camera during movement must not bend the walking path.
-    var direction := touch_move.rotated(-joystick_basis_yaw)
-    if pending_index >= 0 and joystick_touch == -1:
+    # Управление как у персонажа от третьего лица: горизонталь РУЛИТ,
+    # вертикаль ведёт вперёд/назад. Камера закреплена за спиной.
+    var direction := Vector2.ZERO
+    var steering_active := joystick_touch != -1 and touch_move.length() > 0.12
+    if steering_active:
+        # Право на экране = поворот вправо; лево = поворот влево.
+        # При полном отклонении поворот ~100 градусов в секунду.
+        player_facing -= touch_move.x * 1.75 * delta
+        player_facing = wrapf(player_facing, -PI, PI)
+        var forward := Vector2(-sin(player_facing), -cos(player_facing))
+        direction = forward * -touch_move.y
+        # При диагональном отклонении персонаж бежит и плавно поворачивает.
+    elif pending_index >= 0 and joystick_touch == -1:
         var towards := pending_pos - Vector2(player.position.x, player.position.z)
         if towards.length() > 1.95:
             direction = towards.normalized()
-    direction += Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
+            var desired_facing := atan2(-direction.x, -direction.y)
+            player_facing = lerp_angle(player_facing, desired_facing, 1.0 - exp(-10.0 * delta))
+    var keyboard_direction := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
+    if keyboard_direction.length() > 0.12:
+        direction = keyboard_direction
+        var keyboard_facing := atan2(-direction.x, -direction.y)
+        player_facing = lerp_angle(player_facing, keyboard_facing, 1.0 - exp(-10.0 * delta))
     direction = direction.limit_length(1.0)
-    if sitting and direction.length() > 0.1:
+    if sitting and (direction.length() > 0.1 or steering_active):
         sitting = false
         player_visual.position.y = 0.0
     if sitting:
         direction = Vector2.ZERO
-    if direction.length() > 0.12:
-        # Face travel direction quickly. The camera smoothly moves BEHIND the player.
-        var desired_facing := atan2(-direction.x, -direction.y)
-        player_facing = lerp_angle(player_facing, desired_facing, 1.0 - exp(-16.0 * delta))
-        player_visual.rotation.y = player_facing
-        desired_camera_yaw = -player_facing
+    player_visual.rotation.y = player_facing
+    # Не возвращаем камеру к старому направлению после отпускания пальца.
+    desired_camera_yaw = -player_facing
 
     var current := Vector2(player.position.x, player.position.z)
     var motion := direction * WALK_SPEED * delta
@@ -756,7 +768,6 @@ func _unhandled_input(event: InputEvent) -> void:
             if event.position.y > viewport_height * 0.46 and event.position.x < viewport_width * 0.46 and joystick_touch == -1:
                 joystick_touch = event.index
                 joystick_origin = event.position
-                joystick_basis_yaw = camera_yaw
                 touch_move = Vector2.ZERO
             elif event.position.y > viewport_height * 0.46 and event.position.x > viewport_width * 0.54 and gather_touch == -1:
                 gather_touch = event.index
