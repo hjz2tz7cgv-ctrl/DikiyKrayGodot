@@ -467,6 +467,25 @@ func _create_ui() -> void:
     time_label = Label.new()
     time_label.add_theme_font_size_override("font_size", 20)
     top.add_child(time_label)
+    # Две компактные кнопки масштаба по центру сверху.
+    var zoom_controls := HBoxContainer.new()
+    zoom_controls.set_anchors_preset(Control.PRESET_CENTER_TOP)
+    zoom_controls.offset_left = -57
+    zoom_controls.offset_right = 57
+    zoom_controls.offset_top = 76
+    zoom_controls.offset_bottom = 116
+    zoom_controls.add_theme_constant_override("separation", 8)
+    root.add_child(zoom_controls)
+    var zoom_out_button := Button.new()
+    zoom_out_button.text = "−"
+    zoom_out_button.custom_minimum_size = Vector2(52, 40)
+    zoom_out_button.pressed.connect(_zoom.bind(1.5))
+    zoom_controls.add_child(zoom_out_button)
+    var zoom_in_button := Button.new()
+    zoom_in_button.text = "+"
+    zoom_in_button.custom_minimum_size = Vector2(52, 40)
+    zoom_in_button.pressed.connect(_zoom.bind(-1.5))
+    zoom_controls.add_child(zoom_in_button)
     var bottom := VBoxContainer.new()
     bottom.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
     bottom.offset_left = 210
@@ -969,21 +988,11 @@ func _input(event: InputEvent) -> void:
     if event is InputEventScreenTouch:
         if event.pressed:
             active_touches[event.index] = event.position
-            # Два пальца имеют приоритет над обоими джойстиками в любой части поля игры.
-            if active_touches.size() >= 2:
-                pinch_in_progress = true
-                joystick_touch = -1
-                touch_move = Vector2.ZERO
-                gather_touch = -1
-                gather_direction = Vector2.ZERO
-                _stop_mining()
-                var pts: Array = active_touches.values()
-                pinch_previous = (pts[0] as Vector2).distance_to(pts[1] as Vector2)
-                return
-            if pinch_in_progress:
-                return
             var viewport_width := get_viewport().get_visible_rect().size.x
             var viewport_height := get_viewport().get_visible_rect().size.y
+            # Верхняя центральная область отдана кнопкам + и −.
+            if event.position.y < 130.0 and absf(event.position.x - viewport_width * 0.5) < 85.0:
+                return
             if event.position.y > viewport_height * 0.32 and event.position.x < viewport_width * 0.5 and joystick_touch == -1:
                 joystick_touch = event.index
                 joystick_origin = event.position
@@ -995,12 +1004,6 @@ func _input(event: InputEvent) -> void:
                 gather_direction = Vector2.ZERO
         else:
             active_touches.erase(event.index)
-            if pinch_in_progress:
-                if active_touches.size() < 2:
-                    pinch_previous = 0.0
-                if active_touches.is_empty():
-                    pinch_in_progress = false
-                return
             if event.index == joystick_touch:
                 joystick_touch = -1
                 touch_move = Vector2.ZERO
@@ -1011,31 +1014,13 @@ func _input(event: InputEvent) -> void:
                 gather_direction = Vector2.ZERO
                 if event.position.distance_to(gather_origin) < 18.0:
                     _tap_world(event.position)
-            elif active_touches.is_empty():
+            elif active_touches.is_empty() and not (event.position.y < 130.0 and absf(event.position.x - get_viewport().get_visible_rect().size.x * 0.5) < 85.0):
                 _tap_world(event.position)
-    elif event is InputEventMagnifyGesture:
-        # На устройствах, где браузер/Godot передаёт отдельный жест увеличения.
-        if event.factor > 0.0:
-            camera_distance = clampf(camera_distance / event.factor, 5.5, 32.0)
-            _position_camera()
     elif event is InputEventScreenDrag:
         active_touches[event.index] = event.position
-        if pinch_in_progress:
-            if active_touches.size() >= 2:
-                var pts: Array = active_touches.values()
-                var new_distance: float = (pts[0] as Vector2).distance_to(pts[1] as Vector2)
-                if pinch_previous > 0.0:
-                    # Раздвинуть пальцы = приблизить камеру.
-                    # Отношение расстояний даёт одинаковую чувствительность при любом масштабе.
-                    if new_distance > 8.0:
-                        camera_distance = clampf(camera_distance * pinch_previous / new_distance, 5.5, 32.0)
-                        _position_camera()
-                pinch_previous = new_distance
-            return
         if event.index == joystick_touch:
             touch_move = ((event.position - joystick_origin) / 65.0).limit_length(1.0)
         elif event.index == gather_touch:
-            # Правая половина — свободный поворот камеры пальцем.
             camera_input_yaw -= event.relative.x * 0.005
             _position_camera()
 
