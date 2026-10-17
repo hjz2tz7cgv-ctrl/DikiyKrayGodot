@@ -467,23 +467,38 @@ func _create_ui() -> void:
     time_label = Label.new()
     time_label.add_theme_font_size_override("font_size", 20)
     top.add_child(time_label)
-    # Две компактные кнопки масштаба по центру сверху.
+    # Отдельный верхний слой: кнопки всегда поверх игрового HUD.
+    var zoom_layer := CanvasLayer.new()
+    zoom_layer.layer = 20
+    add_child(zoom_layer)
+    var zoom_root := Control.new()
+    zoom_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    zoom_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    zoom_layer.add_child(zoom_root)
     var zoom_controls := HBoxContainer.new()
-    zoom_controls.set_anchors_preset(Control.PRESET_CENTER_TOP)
-    zoom_controls.offset_left = -57
-    zoom_controls.offset_right = 57
-    zoom_controls.offset_top = 76
-    zoom_controls.offset_bottom = 116
+    zoom_controls.anchor_left = 0.5
+    zoom_controls.anchor_right = 0.5
+    zoom_controls.anchor_top = 0.0
+    zoom_controls.anchor_bottom = 0.0
+    zoom_controls.offset_left = -66.0
+    zoom_controls.offset_right = 66.0
+    zoom_controls.offset_top = 12.0
+    zoom_controls.offset_bottom = 60.0
     zoom_controls.add_theme_constant_override("separation", 8)
-    root.add_child(zoom_controls)
+    zoom_controls.mouse_filter = Control.MOUSE_FILTER_STOP
+    zoom_root.add_child(zoom_controls)
     var zoom_out_button := Button.new()
     zoom_out_button.text = "−"
-    zoom_out_button.custom_minimum_size = Vector2(52, 40)
+    zoom_out_button.custom_minimum_size = Vector2(62, 48)
+    zoom_out_button.add_theme_font_size_override("font_size", 30)
+    zoom_out_button.focus_mode = Control.FOCUS_NONE
     zoom_out_button.pressed.connect(_zoom.bind(1.5))
     zoom_controls.add_child(zoom_out_button)
     var zoom_in_button := Button.new()
     zoom_in_button.text = "+"
-    zoom_in_button.custom_minimum_size = Vector2(52, 40)
+    zoom_in_button.custom_minimum_size = Vector2(62, 48)
+    zoom_in_button.add_theme_font_size_override("font_size", 30)
+    zoom_in_button.focus_mode = Control.FOCUS_NONE
     zoom_in_button.pressed.connect(_zoom.bind(-1.5))
     zoom_controls.add_child(zoom_in_button)
     var bottom := VBoxContainer.new()
@@ -650,7 +665,7 @@ func _update_ui() -> void:
         var hour := int(day_clock) % 24
         var minute := int((day_clock - floor(day_clock)) * 60.0)
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
-    zoom_label.text = "Слева — ходьба  •  Справа — добыча  •  Нажми на предмет"
+    zoom_label.text = "Слева — ходьба  •  Справа — камера  •  Масштаб: + / −"
     bag_label.text = "РЮКЗАК\\nДерево: %d  Камень: %d\\nЯгоды: %d  Грибы: %d\\nМясо: %d  Жареное: %d  Шкуры: %d\\nКопьё: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["mushroom"], inventory["meat"], inventory["cooked_meat"], inventory["hide"], "есть" if has_spear else "нет"]
     if craft_recipe_button != null:
         craft_recipe_button.text = "Копьё уже создано" if has_spear else "Создать копьё (3 дерева + 1 камень)"
@@ -991,7 +1006,7 @@ func _input(event: InputEvent) -> void:
             var viewport_width := get_viewport().get_visible_rect().size.x
             var viewport_height := get_viewport().get_visible_rect().size.y
             # Верхняя центральная область отдана кнопкам + и −.
-            if event.position.y < 130.0 and absf(event.position.x - viewport_width * 0.5) < 85.0:
+            if event.position.y < 70.0 and absf(event.position.x - viewport_width * 0.5) < 80.0:
                 return
             if event.position.y > viewport_height * 0.32 and event.position.x < viewport_width * 0.5 and joystick_touch == -1:
                 joystick_touch = event.index
@@ -1014,7 +1029,7 @@ func _input(event: InputEvent) -> void:
                 gather_direction = Vector2.ZERO
                 if event.position.distance_to(gather_origin) < 18.0:
                     _tap_world(event.position)
-            elif active_touches.is_empty() and not (event.position.y < 130.0 and absf(event.position.x - get_viewport().get_visible_rect().size.x * 0.5) < 85.0):
+            elif active_touches.is_empty() and not (event.position.y < 70.0 and absf(event.position.x - get_viewport().get_visible_rect().size.x * 0.5) < 80.0):
                 _tap_world(event.position)
     elif event is InputEventScreenDrag:
         active_touches[event.index] = event.position
