@@ -303,15 +303,15 @@ func _position_camera(delta: float = 0.0) -> void:
         camera_initialized = true
     elif delta > 0.0:
         # Плавный доворот даже при резком развороте персонажа на 180 градусов.
-        camera_follow_yaw = lerp_angle(camera_follow_yaw, facing, 1.0 - exp(-1.35 * delta))
-        camera_focus = camera_focus.lerp(target_focus, 1.0 - exp(-3.0 * delta))
+        camera_follow_yaw = lerp_angle(camera_follow_yaw, facing, 1.0 - exp(-0.72 * delta))
+        camera_focus = camera_focus.lerp(target_focus, 1.0 - exp(-1.8 * delta))
     var backward := Vector3(-sin(camera_follow_yaw), 0.0, cos(camera_follow_yaw))
     var target_position := camera_focus + backward * camera_distance * camera_tilt + Vector3.UP * camera_distance
     if delta <= 0.0:
         # Масштабирование двумя пальцами меняет расстояние сразу, без рывка угла.
         camera.global_position = target_position
     else:
-        camera.global_position = camera.global_position.lerp(target_position, 1.0 - exp(-2.4 * delta))
+        camera.global_position = camera.global_position.lerp(target_position, 1.0 - exp(-1.35 * delta))
     camera.look_at(camera_focus, Vector3.UP)
 
 func _is_lake(pos: Vector2, margin := 0.0) -> bool:
