@@ -581,10 +581,10 @@ func _create_ui() -> void:
     zoom_controls.add_child(zoom_in_button)
     var bottom := VBoxContainer.new()
     bottom.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-    bottom.offset_left = 210
-    bottom.offset_right = -210
-    bottom.offset_top = -92
-    bottom.offset_bottom = -15
+    bottom.offset_left = 8
+    bottom.offset_right = -8
+    bottom.offset_top = -27
+    bottom.offset_bottom = -2
     root.add_child(bottom)
     bag_fly = Label.new()
     bag_fly.visible = false
@@ -593,7 +593,10 @@ func _create_ui() -> void:
     root.add_child(bag_fly)
     zoom_label = Label.new()
     zoom_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    zoom_label.add_theme_font_size_override("font_size", 19)
+    zoom_label.add_theme_font_size_override("font_size", 10)
+    zoom_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8, 0.38))
+    zoom_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
     bottom.add_child(zoom_label)
     progress_bar = ProgressBar.new()
     progress_bar.max_value = 100
@@ -771,13 +774,30 @@ func _select_quick_tool(tool_id: String) -> void:
     _update_ui()
 
 func _refresh_quickbar() -> void:
-    var labels := {"hand":"Рука", "spear":"Копьё", "pickaxe":"Кирка", "sword":"Меч", "bow":"Лук"}
-    for tool_id in quickbar_buttons.keys():
-        var button: Button = quickbar_buttons[tool_id]
-        var owned := _tool_owned(tool_id)
-        button.text = ("● " if equipped_tool == tool_id else "") + str(labels[tool_id]) if owned else "🔒 " + str(labels[tool_id])
-        button.disabled = not owned
-        button.modulate = Color(1.0, 0.94, 0.67) if equipped_tool == tool_id else Color(1, 1, 1)
+    # Ячейки фиксированы: в начале видна только рука, остальные пустые.
+    # После крафта инструменты занимают свободные ячейки по порядку.
+    var owned_tools: Array[String] = ["hand"]
+    if has_spear:
+        owned_tools.append("spear")
+    if has_pickaxe:
+        owned_tools.append("pickaxe")
+    var labels := {"hand": "Рука", "spear": "Копьё", "pickaxe": "Кирка"}
+    var slot_ids := ["hand", "spear", "pickaxe", "sword", "bow"]
+    for slot_index in range(slot_ids.size()):
+        var button: Button = quickbar_buttons[slot_ids[slot_index]]
+        if slot_index < owned_tools.size():
+            var tool_id: String = owned_tools[slot_index]
+            button.text = ("● " if equipped_tool == tool_id else "") + str(labels[tool_id])
+            button.disabled = false
+            button.modulate = Color(1.0, 0.94, 0.67) if equipped_tool == tool_id else Color(1, 1, 1)
+            # При заполнении слотов переназначаем действие на нужный инструмент.
+            for connection in button.pressed.get_connections():
+                button.pressed.disconnect(connection["callable"])
+            button.pressed.connect(_select_quick_tool.bind(tool_id))
+        else:
+            button.text = ""
+            button.disabled = true
+            button.modulate = Color(1, 1, 1)
 
 func _craft_spear() -> void:
     if has_spear:
@@ -859,7 +879,7 @@ func _update_ui() -> void:
         var hour := int(day_clock) % 24
         var minute := int((day_clock - floor(day_clock)) * 60.0)
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
-    zoom_label.text = "Слева — ходьба  •  Справа — камера  •  Масштаб: + / −"
+    zoom_label.text = "слева — ходьба  ·  справа — камера  ·  масштаб +/−"
     bag_label.text = "РЮКЗАК\nДерево: %d    Камень: %d\nЯгоды: %d    Грибы: %d\nМясо: %d    Жареное: %d\nШкуры: %d    Копьё: %s\nКирка: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["mushroom"], inventory["meat"], inventory["cooked_meat"], inventory["hide"], "есть" if has_spear else "нет", "есть" if has_pickaxe else "нет"]
     if quickbar != null:
         _refresh_quickbar()
