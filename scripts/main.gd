@@ -80,6 +80,7 @@ var action_menu: PanelContainer
 var action_list: VBoxContainer
 var action_options: Array[String] = []
 var nearby_action_kind := ""
+var nearby_action_index := -1
 var nearby_action_position := Vector3.ZERO
 var status_message := "Подойдите к дереву или камню"
 var rng := RandomNumberGenerator.new()
@@ -580,15 +581,14 @@ func _create_ui() -> void:
     nearby_button.focus_mode = Control.FOCUS_NONE
     nearby_button.visible = false
     nearby_button.pressed.connect(_perform_nearby_action)
-    nearby_button.gui_input.connect(_nearby_button_gui_input)
     # Используем тот же HUD, что и работающие кнопки «Рюкзак» и «Действие».
     # Якоря задаются относительно реального размера экрана.
     root.add_child(nearby_button)
     nearby_button.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
     nearby_button.offset_left = -112.0
     nearby_button.offset_right = 112.0
-    nearby_button.offset_top = -118.0
-    nearby_button.offset_bottom = -78.0
+    nearby_button.offset_top = -150.0
+    nearby_button.offset_bottom = -110.0
     nearby_button.mouse_filter = Control.MOUSE_FILTER_STOP
     action_menu = PanelContainer.new()
     root.add_child(action_menu)
@@ -736,13 +736,13 @@ func _survival_action(kind: String) -> void:
         else:
             status_message = "Во фляге нет воды"
     elif kind == "water":
-        if here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 2.5:
+        if here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 4.5:
             water_portions = mini(5, water_portions + 1)
             status_message = "Набрана вода во флягу (%d/5)" % water_portions
         else:
             status_message = "Подойди к берегу озера"
     elif kind == "cook":
-        if here.distance_to(FIRE_POS) > 4.0:
+        if here.distance_to(FIRE_POS) > 5.5:
             status_message = "Готовить мясо можно только у костра"
         elif inventory["meat"] < 1 or inventory["wood"] < 1:
             status_message = "Для жарки нужны 1 мясо и 1 дерево"
@@ -820,21 +820,16 @@ func _update_nearby_action() -> void:
     if nearby_button == null or player == null:
         return
     nearby_action_kind = ""
+    nearby_action_index = -1
     nearby_button.hide()
     if bag_panel.visible or action_menu.visible or craft_panel.visible or sleep_panel.visible or sleep_in_progress:
         return
     var here := Vector2(player.global_position.x, player.global_position.z)
-    # Выпавшие предметы собираются отдельной кнопкой после добычи.
-    var closest_drop := -1
-    var drop_distance := 4.0
-    for i in range(drops.size()):
-        var d: float = here.distance_to(drops[i]["pos"])
-        if d < drop_distance:
-            drop_distance = d
-            closest_drop = i
-    if closest_drop >= 0:
-        nearby_action_kind = "drop"
-        nearby_button.text = "Собрать выпавший предмет"
+    # Палатка — отдельное действие при приближении, как костёр и озеро.
+    # Проверяем её первой, чтобы другие ресурсы не скрывали кнопку отдыха.
+    if here.distance_to(TENT_POS) <= 4.0:
+        nearby_action_kind = "tent"
+        nearby_button.text = "Отдохнуть в палатке"
     elif here.distance_to(FIRE_POS) <= 5.5:
         nearby_action_kind = "cook"
         nearby_button.text = "Пожарить мясо у костра"
@@ -842,57 +837,69 @@ func _update_nearby_action() -> void:
         nearby_action_kind = "water"
         nearby_button.text = "Набрать воды"
     else:
-        var index := _nearest_resource()
-        if index >= 0:
-            nearby_action_kind = "resource"
-            var kind: String = resources[index]["kind"]
-            if kind == "tree":
-                nearby_button.text = "Срубить дерево"
-            elif kind == "rock":
-                nearby_button.text = "Добыть камень"
-            elif kind == "berry":
-                nearby_button.text = "Собрать ягоды"
-            elif kind == "mushroom":
-                nearby_button.text = "Собрать грибы"
+        var closest_drop := -1
+        var drop_distance := 3.2
+        for i in range(drops.size()):
+            var d: float = here.distance_to(drops[i]["pos"])
+            if d < drop_distance:
+                drop_distance = d
+                closest_drop = i
+        if closest_drop >= 0:
+            nearby_action_kind = "drop"
+            nearby_action_index = closest_drop
+            nearby_button.text = "Собрать предмет"
+        else:
+            var index := _nearest_resource()
+            if index >= 0:
+                nearby_action_kind = "resource"
+                nearby_action_index = index
+                var kind: String = resources[index]["kind"]
+                if kind == "tree":
+                    nearby_button.text = "Срубить дерево"
+                elif kind == "rock":
+                    nearby_button.text = "Добыть камень"
+                elif kind == "berry":
+                    nearby_button.text = "Собрать ягоды"
+                elif kind == "mushroom":
+                    nearby_button.text = "Собрать грибы"
     if nearby_action_kind != "":
         nearby_button.show()
 
-func _nearby_button_gui_input(event: InputEvent) -> void:
-    if event is InputEventScreenTouch:
-        if event.pressed:
-            nearby_touch_ids[event.index] = true
-        else:
-            nearby_touch_ids.erase(event.index)
-        get_viewport().set_input_as_handled()
-
 func _perform_nearby_action() -> void:
-    # Не пересчитываем/прячем кнопку до обработки нажатия.
-    var chosen_kind: String = nearby_action_kind
-    if chosen_kind == "cook":
-        _survival_action("cook")
-    elif chosen_kind == "water":
-        _survival_action("water")
-    elif chosen_kind == "drop":
+    # Обрабатываем именно то действие, которое написано на кнопке.
+    # Не прячем и не пересчитываем кнопку перед нажатием.
+    var chosen: String = nearby_action_kind
+    var selected: int = nearby_action_index
+    if chosen == "tent":
         var here := Vector2(player.global_position.x, player.global_position.z)
-        var closest := -1
-        var best := 4.0
-        for i in range(drops.size()):
-            var d: float = here.distance_to(drops[i]["pos"])
-            if d < best:
-                best = d
-                closest = i
-        if closest >= 0:
-            _pickup_index(closest)
-    elif chosen_kind == "resource":
-        var index := _nearest_resource()
-        if index >= 0 and bool(resources[index]["alive"]):
-            # Та же добыча, что при нажатии непосредственно на гриб,
-            # дерево или камень: запускаем процесс с заполнением шкалы.
-            pending_index = -1
-            pending_kind = ""
-            _begin_mining(index)
-            # Сбор ягод и грибов короткий; дерево и камень добываются со шкалой.
+        if here.distance_to(TENT_POS) <= 4.0:
+            _show_sleep_panel()
+        else:
+            status_message = "Подойди ближе к палатке"
+    elif chosen == "cook":
+        _survival_action("cook")
+    elif chosen == "water":
+        _survival_action("water")
+    elif chosen == "drop":
+        if selected >= 0 and selected < drops.size():
+            var pos: Vector2 = drops[selected]["pos"]
+            var here := Vector2(player.position.x, player.position.z)
+            if here.distance_to(pos) <= 4.0:
+                _pickup_index(selected)
+            else:
+                status_message = "Подойди ближе к предмету"
+    elif chosen == "resource":
+        if selected >= 0 and selected < resources.size() and bool(resources[selected]["alive"]):
+            var pos: Vector2 = resources[selected]["pos"]
+            var here := Vector2(player.position.x, player.position.z)
+            if here.distance_to(pos) <= 4.6:
+                pending_index = -1
+                pending_kind = ""
+                _begin_mining(selected)
+            else:
+                status_message = "Подойди ближе к ресурсу"
     _update_nearby_action()
+    _update_ui()
 
 func _nearest_resource() -> int:
     var closest := -1
@@ -977,7 +984,7 @@ func _begin_mining(index: int) -> void:
     target_resource = index
     mining_active = true
     mining_progress = 0.0
-    status_message = "Собираем: " + str(resources[index]["kind"]) + "…"
+    status_message = "Добыча началась — подожди заполнения шкалы"
     _update_ui()
 
 func _stop_mining() -> void:
@@ -1198,7 +1205,8 @@ func _input(event: InputEvent) -> void:
             # Не захватываем касания по контекстной кнопке действий.
             if action_button != null and action_button.visible and Rect2(action_button.global_position, action_button.size).has_point(event.position):
                 return
-            if nearby_button != null and nearby_button.visible and Rect2(nearby_button.global_position, nearby_button.size).has_point(event.position):
+            if nearby_button != null and nearby_button.visible and nearby_button.get_global_rect().has_point(event.position):
+                nearby_touch_ids[event.index] = true
                 return
             # Верхняя центральная область отдана кнопкам + и −.
             if event.position.y < 70.0 and absf(event.position.x - viewport_width * 0.5) < 80.0:
@@ -1233,8 +1241,6 @@ func _input(event: InputEvent) -> void:
             elif active_touches.is_empty() and not (event.position.y < 70.0 and absf(event.position.x - get_viewport().get_visible_rect().size.x * 0.5) < 80.0):
                 _tap_world(event.position)
     elif event is InputEventScreenDrag:
-        if nearby_touch_ids.has(event.index):
-            return
         # Пальцы независимы: левый всегда двигает героя, правый — камеру.
         # Используем координаты КОНКРЕТНОГО пальца, не event.relative,
         # который в мобильном браузере может прыгать при двух касаниях.
