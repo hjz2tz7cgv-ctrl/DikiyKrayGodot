@@ -20,6 +20,8 @@ var player_visual: Node3D
 var player_facing := 0.0
 const FIRE_POS := Vector2(-3.0, 4.0)
 const BENCH_POS := Vector2(-3.0, 7.1)
+const CABIN_POS := Vector2(-23.0, 19.0)
+var cabin_searched := false
 var campfire_node: Node3D
 var campfire_light: OmniLight3D
 var fire_flames: Array[MeshInstance3D] = []
@@ -132,6 +134,8 @@ func _ready() -> void:
     _create_resources()
     _create_ore()
     _create_scenery()
+    _create_forest_paths()
+    _create_abandoned_cabin()
     _create_animals()
     _create_ui()
     _update_lighting()
@@ -548,6 +552,56 @@ func _create_scenery() -> void:
         var color := Color("8baf58") if i % 4 else Color("e2cf83")
         _mesh_sphere(tuft, 0.23, Vector3(0, 0.12, 0), color, Vector3(1.0, 0.4, 0.8))
         scenery.append(tuft)
+
+func _create_forest_paths() -> void:
+    # Светлая извилистая тропа от лагеря к заброшенной хижине.
+    # Плоские пятна не блокируют движение и не требуют текстур.
+    var start := Vector2(-7.0, 8.0)
+    for i in range(36):
+        var t := float(i) / 35.0
+        var point := start.lerp(CABIN_POS, t)
+        point.x += sin(t * PI * 2.0) * 1.4
+        if _is_stream(point, 0.4) or _is_lake(point, 0.4):
+            continue
+        var patch := Node3D.new()
+        patch.position = Vector3(point.x, 0.013, point.y)
+        add_child(patch)
+        _mesh_sphere(patch, 0.95, Vector3.ZERO, Color("a28e63"), Vector3(1.25, 0.018, 0.8))
+    # Заросли папоротника у тропы и в лесу.
+    for i in range(85):
+        var pos := _random_land_pos(56.0)
+        if pos.distance_to(TENT_POS) < 6.0 or pos.distance_to(BENCH_POS) < 5.0 or pos.distance_to(CABIN_POS) < 4.0:
+            continue
+        if _is_lake(pos, 0.5) or _is_stream(pos, 0.5):
+            continue
+        var fern := Node3D.new()
+        fern.position = Vector3(pos.x, 0.0, pos.y)
+        add_child(fern)
+        for j in range(4):
+            var angle := float(j) * PI * 0.5
+            var leaf := _mesh_sphere(fern, 0.44, Vector3(cos(angle) * 0.27, 0.28, sin(angle) * 0.27), Color("397447"), Vector3(0.38, 0.36, 1.4))
+            leaf.rotation.y = angle
+
+func _create_abandoned_cabin() -> void:
+    # Исследуемая хижина. Вход со стороны юга, поэтому нет сплошной передней стены.
+    var cabin := Node3D.new()
+    cabin.name = "AbandonedCabin"
+    cabin.position = Vector3(CABIN_POS.x, 0.0, CABIN_POS.y)
+    add_child(cabin)
+    _mesh_box(cabin, Vector3(5.8, 0.22, 4.7), Vector3(0, 0.12, 0), Color("5e4934"))
+    _mesh_box(cabin, Vector3(5.8, 2.7, 0.35), Vector3(0, 1.5, 2.25), Color("695039"))
+    for side in [-2.75, 2.75]:
+        _mesh_box(cabin, Vector3(0.32, 2.7, 4.6), Vector3(side, 1.5, 0), Color("75583b"))
+    for x in [-1.9, 1.9]:
+        _mesh_box(cabin, Vector3(1.9, 2.7, 0.34), Vector3(x, 1.5, -2.25), Color("70513a"))
+    for side in [-1.0, 1.0]:
+        var roof := _mesh_box(cabin, Vector3(3.75, 0.25, 5.25), Vector3(side * 1.43, 3.27, 0), Color("463a32"))
+        roof.rotation.z = side * 0.33
+    _mesh_box(cabin, Vector3(1.2, 0.7, 0.7), Vector3(0.4, 0.49, 0.6), Color("836044"))
+    _mesh_box(cabin, Vector3(0.85, 0.14, 0.8), Vector3(0.4, 0.91, 0.6), Color("b19b6c"))
+    # Стены учитываются как препятствия, но вход открыт.
+    for offset, radius in [[Vector2(-2.75, 0), 0.7], [Vector2(2.75, 0), 0.7], [Vector2(0, 2.25), 0.7], [Vector2(-1.9, -2.25), 0.5], [Vector2(1.9, -2.25), 0.5]]:
+        obstacles.append({"pos": CABIN_POS + offset, "radius": radius, "node": cabin})
 
 func _create_animals() -> void:
     # Зайцы, олени и кабаны мирно бродят по миру.
@@ -1087,6 +1141,16 @@ func _survival_action(kind: String) -> void:
             status_message = "Набрана вода во флягу (%d/5)" % water_portions
         else:
             status_message = "Подойди к берегу озера"
+    elif kind == "cabin":
+        if here.distance_to(CABIN_POS) > 4.1:
+            status_message = "Подойди к заброшенной хижине"
+        elif cabin_searched:
+            status_message = "Хижина уже осмотрена. Внутри тихо и пусто"
+        else:
+            cabin_searched = true
+            inventory["wood"] += 3
+            inventory["stone"] += 2
+            status_message = "В хижине найден тайник: +3 древесины, +2 камня"
     elif kind == "rest":
         if here.distance_to(BENCH_POS) <= 3.0 and not cooking_active:
             _sit_on_bench()
@@ -1141,6 +1205,8 @@ func _open_action_menu() -> void:
         _add_action_option("Съесть жареное мясо", "cooked_meat")
     if water_portions > 0:
         _add_action_option("Попить воды (%d)" % water_portions, "drink")
+    if Vector2(player.position.x, player.position.z).distance_to(CABIN_POS) <= 4.1:
+        _add_action_option("Осмотреть заброшенную хижину", "cabin")
     if Vector2(player.position.x, player.position.z).distance_to(FIRE_POS) <= 3.5:
         _add_action_option("Пожарить мясо и сесть", "cook")
     if Vector2(player.position.x, player.position.z).distance_to(BENCH_POS) <= 3.0:
@@ -1194,6 +1260,9 @@ func _update_nearby_action() -> void:
     if here.distance_to(TENT_POS) <= 2.8:
         nearby_action_kind = "tent"
         nearby_button.text = "Отдохнуть в палатке"
+    elif here.distance_to(CABIN_POS) <= 4.1:
+        nearby_action_kind = "cabin"
+        nearby_button.text = "Осмотреть заброшенную хижину"
     elif here.distance_to(BENCH_POS) <= 2.8 and not cooking_active:
         nearby_action_kind = "stand" if sitting else "rest"
         nearby_button.text = "Встать со скамейки" if sitting else "Сесть на скамейку и отдохнуть"
@@ -1245,6 +1314,8 @@ func _perform_nearby_action() -> void:
             _show_sleep_panel()
         else:
             status_message = "Подойди ближе к палатке"
+    elif chosen == "cabin":
+        _survival_action("cabin")
     elif chosen == "rest":
         _survival_action("rest")
     elif chosen == "stand":
