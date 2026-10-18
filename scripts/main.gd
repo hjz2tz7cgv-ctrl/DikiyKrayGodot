@@ -48,6 +48,12 @@ var survival_label: Label
 var survival_buttons: Array[Button] = []
 var has_spear := false
 var has_pickaxe := false
+var has_shovel := false
+var shovel_recipe_button: Button
+var caches: Array[Dictionary] = []
+var digging_active := false
+var digging_index := -1
+var digging_progress := 0.0
 var has_iron_tool := false
 var iron_recipe_button: Button
 var bandage_recipe_button: Button
@@ -143,6 +149,7 @@ func _ready() -> void:
     _create_forest_paths()
     _create_abandoned_cabin()
     _create_logger_camp()
+    _create_buried_caches()
     _create_animals()
     _create_ui()
     _update_lighting()
@@ -668,6 +675,74 @@ func _create_logger_camp() -> void:
     _mesh_box(camp, Vector3(0.7, 0.08, 0.55), Vector3(1.25, 0.82, 0.65), Color("b7a17a"))
 
 
+func _create_buried_caches() -> void:
+    # Тайники только на сухой земле, вдали от построек и препятствий.
+    var candidates: Array[Vector2] = [Vector2(-20, 40), Vector2(53, 43), Vector2(-42, -22), Vector2(76, -65), Vector2(-75, 64), Vector2(110, 38)]
+    for pos in candidates:
+        if not _can_place(pos, 2.2):
+            continue
+        var cache_node := Node3D.new()
+        cache_node.name = "BuriedCache"
+        cache_node.position = Vector3(pos.x, 0, pos.y)
+        add_child(cache_node)
+        # Земляной холмик и две ветки крестом — заметный ориентир.
+        _mesh_sphere(cache_node, 0.85, Vector3(0, 0.12, 0), Color("715b40"), Vector3(1.2, 0.35, 1.0))
+        var branch_a := _mesh_box(cache_node, Vector3(1.25, 0.10, 0.13), Vector3(0, 0.39, 0), Color("5a3825"))
+        branch_a.rotation.y = 0.6
+        var branch_b := _mesh_box(cache_node, Vector3(1.25, 0.10, 0.13), Vector3(0, 0.41, 0), Color("6d472d"))
+        branch_b.rotation.y = -0.6
+        caches.append({"pos": pos, "node": cache_node, "dug": false})
+
+func _nearest_cache() -> int:
+    if player == null:
+        return -1
+    var here := Vector2(player.position.x, player.position.z)
+    for i in range(caches.size()):
+        if not bool(caches[i]["dug"]) and here.distance_to(caches[i]["pos"]) <= 2.7:
+            return i
+    return -1
+
+func _begin_digging(index: int) -> void:
+    if index < 0 or index >= caches.size() or bool(caches[index]["dug"]):
+        return
+    if not has_shovel or equipped_tool != "shovel":
+        status_message = "Для раскопки изготовь и выбери лопату"
+        _update_ui()
+        return
+    _stop_mining()
+    digging_index = index
+    digging_progress = 0.0
+    digging_active = true
+    status_message = "Раскапываем тайник..."
+    _update_ui()
+
+func _finish_digging() -> void:
+    if digging_index < 0 or digging_index >= caches.size():
+        digging_active = false
+        return
+    var cache: Dictionary = caches[digging_index]
+    if bool(cache["dug"]):
+        digging_active = false
+        return
+    cache["dug"] = true
+    var marker: Node3D = cache["node"]
+    marker.queue_free()
+    caches[digging_index] = cache
+    var wood_reward := 2 + digging_index % 3
+    var stone_reward := 1 + digging_index % 2
+    inventory["wood"] += wood_reward
+    inventory["stone"] += stone_reward
+    if digging_index % 2 == 0:
+        inventory["iron"] += 1
+    else:
+        inventory["herb"] += 2
+    status_message = "Тайник найден! +%d дерева, +%d камня и редкая находка" % [wood_reward, stone_reward]
+    digging_active = false
+    digging_index = -1
+    digging_progress = 0.0
+    progress_bar.visible = false
+    _update_ui()
+
 func _create_animals() -> void:
     # Зайцы, олени и кабаны мирно бродят по миру.
     for i in range(32):
@@ -871,7 +946,7 @@ func _create_ui() -> void:
     quickbar.offset_right = 158.0
     quickbar.offset_top = -99.0
     quickbar.offset_bottom = -48.0
-    for tool_id in ["hand", "spear", "pickaxe", "sword", "bow"]:
+    for tool_id in ["hand", "spear", "pickaxe", "shovel", "bow"]:
         var tool_button := Button.new()
         tool_button.custom_minimum_size = Vector2(58, 48)
         tool_button.focus_mode = Control.FOCUS_NONE
@@ -903,8 +978,8 @@ func _create_ui() -> void:
     craft_panel.set_anchors_preset(Control.PRESET_CENTER)
     craft_panel.offset_left = -160
     craft_panel.offset_right = 160
-    craft_panel.offset_top = -230
-    craft_panel.offset_bottom = 230
+    craft_panel.offset_top = -265
+    craft_panel.offset_bottom = 265
     craft_panel.visible = false
     var craft_col := VBoxContainer.new()
     craft_panel.add_child(craft_col)
@@ -937,6 +1012,10 @@ func _create_ui() -> void:
     tea_recipe_button.custom_minimum_size.y = 48
     tea_recipe_button.pressed.connect(_craft_tea)
     craft_col.add_child(tea_recipe_button)
+    shovel_recipe_button = Button.new()
+    shovel_recipe_button.custom_minimum_size.y = 48
+    shovel_recipe_button.pressed.connect(_craft_shovel)
+    craft_col.add_child(shovel_recipe_button)
     var craft_close := Button.new()
     craft_close.text = "Закрыть"
     craft_close.custom_minimum_size.y = 48
@@ -1016,6 +1095,19 @@ func _update_minimap() -> void:
         var point: Vector2 = positions[i]
         minimap_dots[i].position = Vector2(69, 69) + point * 0.91 - minimap_dots[i].size * 0.5
 
+func _craft_shovel() -> void:
+    if has_shovel:
+        status_message = "Лопата уже изготовлена"
+    elif inventory["wood"] >= 3 and inventory["iron"] >= 2:
+        inventory["wood"] -= 3
+        inventory["iron"] -= 2
+        has_shovel = true
+        equipped_tool = "shovel"
+        status_message = "Лопата готова и выбрана! Ищи холмики с ветками"
+    else:
+        status_message = "Для лопаты нужны 3 дерева и 2 железа"
+    _update_ui()
+
 func _craft_bandage() -> void:
     if inventory["herb"] >= 2 and inventory["hide"] >= 1:
         inventory["herb"] -= 2
@@ -1063,6 +1155,8 @@ func _tool_owned(tool_id: String) -> bool:
         return has_spear
     if tool_id == "pickaxe":
         return has_pickaxe
+    if tool_id == "shovel":
+        return has_shovel
     return false # Меч и лук добавим вместе с их крафтом и механиками.
 
 func _select_quick_tool(tool_id: String) -> void:
@@ -1071,7 +1165,7 @@ func _select_quick_tool(tool_id: String) -> void:
         _update_ui()
         return
     equipped_tool = tool_id
-    status_message = "Выбрано: " + {"hand":"Рука", "spear":"Копьё", "pickaxe":"Кирка"}.get(tool_id, tool_id)
+    status_message = "Выбрано: " + {"hand":"Рука", "spear":"Копьё", "pickaxe":"Кирка", "shovel":"Лопата"}.get(tool_id, tool_id)
     _update_ui()
 
 func _refresh_quickbar() -> void:
@@ -1082,8 +1176,10 @@ func _refresh_quickbar() -> void:
         owned_tools.append("spear")
     if has_pickaxe:
         owned_tools.append("pickaxe")
-    var labels := {"hand": "Рука", "spear": "Копьё", "pickaxe": "Кирка"}
-    var slot_ids := ["hand", "spear", "pickaxe", "sword", "bow"]
+    if has_shovel:
+        owned_tools.append("shovel")
+    var labels := {"hand": "Рука", "spear": "Копьё", "pickaxe": "Кирка", "shovel": "Лопата"}
+    var slot_ids := ["hand", "spear", "pickaxe", "shovel", "bow"]
     for slot_index in range(slot_ids.size()):
         var button: Button = quickbar_buttons[slot_ids[slot_index]]
         if slot_index < owned_tools.size():
@@ -1172,6 +1268,13 @@ func _show_center_hint(message: String) -> void:
     hint_tween.tween_property(hint_panel, "modulate:a", 0.0, 0.65)
     hint_tween.tween_callback(func() -> void: hint_panel.visible = false)
 
+func _dug_cache_count() -> int:
+    var count := 0
+    for cache in caches:
+        if bool(cache["dug"]):
+            count += 1
+    return count
+
 func _update_ui() -> void:
     info_label.text = "ДИКИЙ КРАЙ 3D"
     if status_message != last_hint_message:
@@ -1184,6 +1287,7 @@ func _update_ui() -> void:
         var minute := int((day_clock - floor(day_clock)) * 60.0)
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
     bag_label.text = "РЮКЗАК\nДерево: %d    Камень: %d\nЯгоды: %d    Грибы: %d\nМясо: %d    Жареное: %d\nШкуры: %d    Копьё: %s\nКирка: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["mushroom"], inventory["meat"], inventory["cooked_meat"], inventory["hide"], "есть" if has_spear else "нет", "есть" if has_pickaxe else "нет"]
+    bag_label.text += "\nЛопата: %s  Раскопано тайников: %d" % ["есть" if has_shovel else "нет", _dug_cache_count()]
     bag_label.text += "\nЖелезо: %d  Серебро: %d  Золото: %d\nЖелезный инструмент: %s" % [inventory["iron"], inventory["silver"], inventory["gold"], "есть" if has_iron_tool else "нет"]
     bag_label.text += "\\nТравы: %d  Красные грибы: %d\\nПовязки: %d  Отвары: %d" % [inventory["herb"], inventory["poison_mushroom"], inventory["bandage"], inventory["herbal_tea"]]
     if cabin_note_found:
@@ -1203,6 +1307,9 @@ func _update_ui() -> void:
     if tea_recipe_button != null:
         tea_recipe_button.text = "Травяной отвар (2 травы + 1 вода)"
         tea_recipe_button.disabled = inventory["herb"] < 2 or water_portions < 1
+    if shovel_recipe_button != null:
+        shovel_recipe_button.text = "Лопата готова" if has_shovel else "Создать лопату (3 дерева + 2 железа)"
+        shovel_recipe_button.disabled = has_shovel or inventory["wood"] < 3 or inventory["iron"] < 2
     if pickaxe_recipe_button != null:
         pickaxe_recipe_button.text = "Кирка уже создана" if has_pickaxe else "Создать кирку (3 дерева + 2 камня)"
         pickaxe_recipe_button.disabled = has_pickaxe or inventory["wood"] < 3 or inventory["stone"] < 2
@@ -1338,6 +1445,8 @@ func _open_action_menu() -> void:
         _add_action_option("Съесть красный гриб (опасно!)", "poison_mushroom")
     if water_portions > 0:
         _add_action_option("Попить воды (%d)" % water_portions, "drink")
+    if _nearest_cache() >= 0:
+        _add_action_option("Раскопать тайник (лопата)", "dig_cache")
     if Vector2(player.position.x, player.position.z).distance_to(LOGGER_POS) <= 5.0:
         _add_action_option("Осмотреть стоянку лесорубов", "logger")
     if Vector2(player.position.x, player.position.z).distance_to(CABIN_POS) <= 4.1:
@@ -1373,6 +1482,8 @@ func _select_action(id: int) -> void:
     action_menu.visible = false
     if kind == "craft":
         _toggle_craft()
+    elif kind == "dig_cache":
+        _begin_digging(_nearest_cache())
     elif kind == "resource":
         var index := _nearest_resource()
         if index >= 0:
@@ -1395,6 +1506,10 @@ func _update_nearby_action() -> void:
     if here.distance_to(TENT_POS) <= 2.8:
         nearby_action_kind = "tent"
         nearby_button.text = "Отдохнуть в палатке"
+    elif _nearest_cache() >= 0:
+        nearby_action_kind = "dig_cache"
+        nearby_action_index = _nearest_cache()
+        nearby_button.text = "Раскопать тайник (лопата)"
     elif here.distance_to(LOGGER_POS) <= 5.0:
         nearby_action_kind = "logger"
         nearby_button.text = "Осмотреть стоянку лесорубов"
@@ -1456,6 +1571,8 @@ func _perform_nearby_action() -> void:
             _show_sleep_panel()
         else:
             status_message = "Подойди ближе к палатке"
+    elif chosen == "dig_cache":
+        _begin_digging(selected)
     elif chosen == "logger":
         _survival_action("logger")
     elif chosen == "cabin":
@@ -1585,6 +1702,7 @@ func _begin_mining(index: int) -> void:
         status_message = "Для большого камня выбери кирку в нижней панели (крафт: 3 дерева + 2 камня)"
         _update_ui()
         return
+    digging_active = false
     target_resource = index
     mining_active = true
     mining_progress = 0.0
@@ -1779,6 +1897,18 @@ func _physics_process(delta: float) -> void:
         var nearest := _nearest_resource()
         if nearest >= 0:
             _begin_mining(nearest)
+    if digging_active:
+        if digging_index < 0 or digging_index >= caches.size() or Vector2(player.position.x, player.position.z).distance_to(caches[digging_index]["pos"]) > 3.1 or equipped_tool != "shovel":
+            digging_active = false
+            digging_index = -1
+            progress_bar.visible = false
+            status_message = "Раскопка прервана"
+        else:
+            digging_progress += delta
+            progress_bar.visible = true
+            progress_bar.value = minf(100.0, digging_progress / 5.0 * 100.0)
+            if digging_progress >= 5.0:
+                _finish_digging()
     if mining_active:
         if target_resource < 0 or not resources[target_resource]["alive"] or Vector2(player.position.x, player.position.z).distance_to(resources[target_resource]["pos"]) > 3.0:
             _stop_mining()
