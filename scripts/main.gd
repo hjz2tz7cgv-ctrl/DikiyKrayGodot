@@ -35,13 +35,18 @@ var resources: Array[Dictionary] = []
 var drops: Array[Dictionary] = []
 var animals: Array[Dictionary] = []
 var scenery: Array[Node3D] = []
-var inventory := {"wood": 0, "stone": 0, "berry": 0, "meat": 0, "hide": 0, "mushroom": 0, "cooked_meat": 0}
+var inventory := {"wood": 0, "stone": 0, "berry": 0, "meat": 0, "hide": 0, "mushroom": 0, "cooked_meat": 0, "iron": 0, "silver": 0, "gold": 0}
 var hunger := 100.0
 var thirst := 100.0
 var survival_label: Label
 var survival_buttons: Array[Button] = []
 var has_spear := false
 var has_pickaxe := false
+var has_iron_tool := false
+var iron_recipe_button: Button
+var minimap: Control
+var minimap_dots: Array[Control] = []
+var stream_points: Array[Vector2] = []
 # Панель быстрого доступа: инструменты остаются собственностью игрока,
 # но выбираются здесь, без открытия рюкзака.
 var equipped_tool := "hand"
@@ -117,11 +122,13 @@ var sleep_elapsed := 0.0
 func _ready() -> void:
     rng.seed = 20261017
     _create_world()
+    _create_stream_and_hills()
     _create_tent()
     _create_camp()
     _create_player()
     _create_camera()
     _create_resources()
+    _create_ore()
     _create_scenery()
     _create_animals()
     _create_ui()
@@ -175,6 +182,66 @@ func _create_world() -> void:
     env.environment = e
     sky_environment = e
     add_child(env)
+
+func _stream_center_x(z: float) -> float:
+    return -25.0 + sin(z * 0.105) * 5.0 + sin(z * 0.24) * 1.8
+
+func _is_stream(pos: Vector2, margin: float = 0.0) -> bool:
+    return absf(pos.x - _stream_center_x(pos.y)) < 1.65 + margin and absf(pos.y) < 56.0
+
+func _create_stream_and_hills() -> void:
+    # Извилистый ручей из коротких плоских сегментов. Вода не требует шейдеров.
+    for i in range(56):
+        var z := -55.0 + float(i) * 2.0
+        var x := _stream_center_x(z)
+        var next_x := _stream_center_x(z + 2.0)
+        var direction := Vector2(next_x - x, 2.0)
+        var section := Node3D.new()
+        section.position = Vector3(x, -0.035, z + 1.0)
+        section.rotation.y = atan2(direction.x, direction.y)
+        add_child(section)
+        _mesh_box(section, Vector3(3.25, 0.045, 2.25), Vector3.ZERO, Color("48a8c4"))
+        if i % 3 == 0:
+            _mesh_sphere(section, 0.42, Vector3(-2.05, 0.18, 0), Color("939b92"), Vector3(1.5, 0.42, 0.8))
+            _mesh_sphere(section, 0.35, Vector3(2.05, 0.15, 0), Color("a2a69b"), Vector3(1.4, 0.45, 0.9))
+        stream_points.append(Vector2(x, z))
+    # Невысокие холмы и скальные выступы по краям карты.
+    for i in range(19):
+        var pos := Vector2(rng.randf_range(-56.0, 56.0), rng.randf_range(-56.0, 56.0))
+        if pos.length() < 16.0 or _is_lake(pos, 5.0) or _is_stream(pos, 5.0):
+            continue
+        var hill := Node3D.new()
+        hill.position = Vector3(pos.x, -0.1, pos.y)
+        add_child(hill)
+        var radius := rng.randf_range(2.2, 4.5)
+        _mesh_sphere(hill, radius, Vector3(0, 0.05, 0), Color("668956"), Vector3(1.45, 0.34, 1.1))
+        if i % 2 == 0:
+            _mesh_sphere(hill, radius * 0.57, Vector3(radius * 0.28, radius * 0.25, 0), Color("7d8580"), Vector3(1.1, 0.65, 0.9))
+        obstacles.append({"pos": pos, "radius": radius * 0.72, "node": hill})
+
+func _create_ore() -> void:
+    var types := ["iron", "silver", "gold"]
+    var colors := [Color("9c6b51"), Color("c1c8d0"), Color("d5ad3b")]
+    for i in range(30):
+        var kind: String = types[0] if i < 18 else types[1] if i < 26 else types[2]
+        var pos := Vector2.ZERO
+        var found := false
+        for attempt in range(100):
+            pos = _random_land_pos(55.0)
+            if _can_place(pos, 1.1) and (kind != "gold" or _is_stream(pos, 8.0)):
+                found = true
+                break
+        if not found:
+            continue
+        var ore := Node3D.new()
+        ore.position = Vector3(pos.x, 0, pos.y)
+        add_child(ore)
+        _mesh_sphere(ore, 1.1, Vector3(0, 0.62, 0), Color("626d70"), Vector3(1.2, 0.72, 1.0))
+        var color: Color = colors[types.find(kind)]
+        for j in range(5):
+            _mesh_sphere(ore, 0.23, Vector3(rng.randf_range(-0.65, 0.65), rng.randf_range(0.6, 1.05), rng.randf_range(-0.6, 0.6)), color)
+        obstacles.append({"pos": pos, "radius": 0.95, "node": ore})
+        resources.append({"kind": kind, "pos": pos, "node": ore, "duration": 6.0, "large": true, "alive": true})
 
 func _create_tent() -> void:
     # Палатка на стартовой поляне. Простая геометрия для WebGL/iPhone.
@@ -360,7 +427,7 @@ func _is_lake(pos: Vector2, margin := 0.0) -> bool:
     return pos.distance_to(LAKE_CENTER) < LAKE_RADIUS + margin
 
 func _can_place(pos: Vector2, radius: float) -> bool:
-    if _is_lake(pos, radius + 0.3):
+    if _is_lake(pos, radius + 0.3) or _is_stream(pos, radius + 0.3):
         return false
     if pos.length() < 3.3 or pos.distance_to(TENT_POS) < radius + 3.5 or pos.distance_to(FIRE_POS) < radius + 3.2 or pos.distance_to(BENCH_POS) < radius + 2.4:
         return false
@@ -442,7 +509,7 @@ func _create_scenery() -> void:
     # Небольшие декоративные поляны и цветы, не блокирующие движение.
     for i in range(95):
         var pos := _random_land_pos()
-        if _is_lake(pos, 0.5) or pos.length() < 3.0:
+        if _is_lake(pos, 0.5) or _is_stream(pos, 0.5) or pos.length() < 3.0:
             continue
         var tuft := Node3D.new()
         tuft.position = Vector3(pos.x, 0, pos.y)
@@ -539,7 +606,7 @@ func _create_ui() -> void:
     craft_button.text = "Крафт"
     craft_button.custom_minimum_size = Vector2(110, 56)
     craft_button.pressed.connect(_toggle_craft)
-    craft_button.visible = false
+    craft_button.visible = true
     top.add_child(craft_button)
     time_label = Label.new()
     time_label.add_theme_font_size_override("font_size", 20)
@@ -664,6 +731,7 @@ func _create_ui() -> void:
         quickbar.add_child(tool_button)
         quickbar_buttons[tool_id] = tool_button
     _refresh_quickbar()
+    _create_minimap(root)
     action_menu = PanelContainer.new()
     root.add_child(action_menu)
     action_menu.set_anchors_preset(Control.PRESET_CENTER)
@@ -685,8 +753,8 @@ func _create_ui() -> void:
     craft_panel.set_anchors_preset(Control.PRESET_CENTER)
     craft_panel.offset_left = -160
     craft_panel.offset_right = 160
-    craft_panel.offset_top = -125
-    craft_panel.offset_bottom = 125
+    craft_panel.offset_top = -190
+    craft_panel.offset_bottom = 190
     craft_panel.visible = false
     var craft_col := VBoxContainer.new()
     craft_panel.add_child(craft_col)
@@ -696,7 +764,7 @@ func _create_ui() -> void:
     craft_title.add_theme_font_size_override("font_size", 25)
     craft_col.add_child(craft_title)
     var craft_description := Label.new()
-    craft_description.text = "Копьё — для охоты. Кирка — для крупных камней."
+    craft_description.text = "Копьё, кирка и железный инструмент"
     craft_description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     craft_col.add_child(craft_description)
     craft_recipe_button = Button.new()
@@ -707,6 +775,10 @@ func _create_ui() -> void:
     pickaxe_recipe_button.custom_minimum_size.y = 55
     pickaxe_recipe_button.pressed.connect(_craft_pickaxe)
     craft_col.add_child(pickaxe_recipe_button)
+    iron_recipe_button = Button.new()
+    iron_recipe_button.custom_minimum_size.y = 55
+    iron_recipe_button.pressed.connect(_craft_iron_tool)
+    craft_col.add_child(iron_recipe_button)
     var craft_close := Button.new()
     craft_close.text = "Закрыть"
     craft_close.custom_minimum_size.y = 48
@@ -740,6 +812,63 @@ func _create_ui() -> void:
     sleep_fade.color = Color(0, 0, 0, 0)
     sleep_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
     root.add_child(sleep_fade)
+
+func _create_minimap(root: Control) -> void:
+    # Круглая карта справа сверху. Точки не перехватывают касания.
+    minimap = Control.new()
+    minimap.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+    minimap.offset_left = -150.0
+    minimap.offset_right = -12.0
+    minimap.offset_top = 82.0
+    minimap.offset_bottom = 220.0
+    minimap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    root.add_child(minimap)
+    var disc := Panel.new()
+    disc.position = Vector2.ZERO
+    disc.size = Vector2(138, 138)
+    disc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    var style := StyleBoxFlat.new()
+    style.bg_color = Color(0.10, 0.20, 0.16, 0.82)
+    style.corner_radius_top_left = 69
+    style.corner_radius_top_right = 69
+    style.corner_radius_bottom_left = 69
+    style.corner_radius_bottom_right = 69
+    style.border_width_left = 2
+    style.border_width_right = 2
+    style.border_width_top = 2
+    style.border_width_bottom = 2
+    style.border_color = Color("a6bd9c")
+    disc.add_theme_stylebox_override("panel", style)
+    minimap.add_child(disc)
+    # Маркеры создаются один раз и перемещаются при обновлении.
+    for i in range(4):
+        var dot := ColorRect.new()
+        dot.size = Vector2(8, 8) if i == 0 else Vector2(6, 6)
+        dot.color = Color("fff1a4") if i == 0 else Color("c8b180") if i == 1 else Color("4cb7d7") if i == 2 else Color("d9ad62")
+        dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        minimap.add_child(dot)
+        minimap_dots.append(dot)
+    _update_minimap()
+
+func _update_minimap() -> void:
+    if minimap == null or player == null or minimap_dots.size() < 4:
+        return
+    var positions := [Vector2(player.position.x, player.position.z), TENT_POS, LAKE_CENTER, Vector2(_stream_center_x(0.0), 0.0)]
+    for i in range(4):
+        var point: Vector2 = positions[i]
+        minimap_dots[i].position = Vector2(69, 69) + point * 0.91 - minimap_dots[i].size * 0.5
+
+func _craft_iron_tool() -> void:
+    if has_iron_tool:
+        status_message = "Железный инструмент уже изготовлен"
+    elif inventory["iron"] >= 2 and inventory["wood"] >= 2:
+        inventory["iron"] -= 2
+        inventory["wood"] -= 2
+        has_iron_tool = true
+        status_message = "Железная кирка готова: руда добывается быстрее"
+    else:
+        status_message = "Нужно 2 железа и 2 дерева"
+    _update_ui()
 
 func _toggle_craft() -> void:
     craft_panel.visible = not craft_panel.visible
@@ -781,7 +910,7 @@ func _refresh_quickbar() -> void:
         var button: Button = quickbar_buttons[slot_ids[slot_index]]
         if slot_index < owned_tools.size():
             var tool_id: String = owned_tools[slot_index]
-            button.text = ("● " if equipped_tool == tool_id else "") + str(labels[tool_id])
+            button.text = ("● " if equipped_tool == tool_id else "") + ("Жел. кирка" if tool_id == "pickaxe" and has_iron_tool else str(labels[tool_id]))
             button.disabled = false
             button.modulate = Color(1.0, 0.94, 0.67) if equipped_tool == tool_id else Color(1, 1, 1)
             # При заполнении слотов переназначаем действие на нужный инструмент.
@@ -877,11 +1006,16 @@ func _update_ui() -> void:
         var minute := int((day_clock - floor(day_clock)) * 60.0)
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
     bag_label.text = "РЮКЗАК\nДерево: %d    Камень: %d\nЯгоды: %d    Грибы: %d\nМясо: %d    Жареное: %d\nШкуры: %d    Копьё: %s\nКирка: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["mushroom"], inventory["meat"], inventory["cooked_meat"], inventory["hide"], "есть" if has_spear else "нет", "есть" if has_pickaxe else "нет"]
+    bag_label.text += "\nЖелезо: %d  Серебро: %d  Золото: %d\nЖелезный инструмент: %s" % [inventory["iron"], inventory["silver"], inventory["gold"], "есть" if has_iron_tool else "нет"]
     if quickbar != null:
         _refresh_quickbar()
+    _update_minimap()
     if craft_recipe_button != null:
         craft_recipe_button.text = "Копьё уже создано" if has_spear else "Создать копьё (3 дерева + 1 камень)"
         craft_recipe_button.disabled = has_spear or inventory["wood"] < 3 or inventory["stone"] < 1
+    if iron_recipe_button != null:
+        iron_recipe_button.text = "Железный инструмент готов" if has_iron_tool else "Железный инструмент (2 железа + 2 дерева)"
+        iron_recipe_button.disabled = has_iron_tool or inventory["iron"] < 2 or inventory["wood"] < 2
     if pickaxe_recipe_button != null:
         pickaxe_recipe_button.text = "Кирка уже создана" if has_pickaxe else "Создать кирку (3 дерева + 2 камня)"
         pickaxe_recipe_button.disabled = has_pickaxe or inventory["wood"] < 3 or inventory["stone"] < 2
@@ -1041,6 +1175,8 @@ func _update_nearby_action() -> void:
                     nearby_button.text = "Срубить дерево"
                 elif kind == "rock":
                     nearby_button.text = "Добыть крупный камень (кирка)" if resources[index].get("large", false) else "Подобрать маленький камень"
+                elif kind == "iron" or kind == "silver" or kind == "gold":
+                    nearby_button.text = "Добыть руду (кирка)"
                 elif kind == "berry":
                     nearby_button.text = "Собрать ягоды"
                 elif kind == "mushroom":
@@ -1174,7 +1310,7 @@ func _tap_world(screen: Vector2) -> void:
 func _begin_mining(index: int) -> void:
     if index < 0 or index >= resources.size() or not bool(resources[index]["alive"]):
         return
-    if resources[index]["kind"] == "rock" and bool(resources[index].get("large", false)) and (not has_pickaxe or equipped_tool != "pickaxe"):
+    if (resources[index]["kind"] == "rock" and bool(resources[index].get("large", false)) or resources[index]["kind"] == "iron" or resources[index]["kind"] == "silver" or resources[index]["kind"] == "gold") and (not has_pickaxe or equipped_tool != "pickaxe"):
         status_message = "Для большого камня выбери кирку в нижней панели (крафт: 3 дерева + 2 камня)"
         _update_ui()
         return
@@ -1197,11 +1333,11 @@ func _finish_mining() -> void:
     for i in range(obstacles.size() - 1, -1, -1):
         if obstacles[i]["node"] == r["node"]:
             obstacles.remove_at(i)
-    var kind: String = "wood" if r["kind"] == "tree" else "stone" if r["kind"] == "rock" else "mushroom" if r["kind"] == "mushroom" else "berry"
+    var kind: String = "wood" if r["kind"] == "tree" else "stone" if r["kind"] == "rock" else "mushroom" if r["kind"] == "mushroom" else str(r["kind"]) if r["kind"] == "iron" or r["kind"] == "silver" or r["kind"] == "gold" else "berry"
     var drop := Node3D.new()
     drop.position = Vector3(r["pos"].x, 0.35, r["pos"].y)
     add_child(drop)
-    _mesh_sphere(drop, 0.28, Vector3.ZERO, Color("bd8b52") if kind == "wood" else Color("c0c5c8") if kind == "stone" else Color("bd394e"))
+    _mesh_sphere(drop, 0.28, Vector3.ZERO, Color("bd8b52") if kind == "wood" else Color("c0c5c8") if kind == "stone" else Color("a57859") if kind == "iron" else Color("d0d6dd") if kind == "silver" else Color("e2bc48") if kind == "gold" else Color("bd394e"))
     drops.append({"kind": kind, "pos": r["pos"], "node": drop})
     status_message = "Ресурс выпал — нажми на него"
     _stop_mining()
@@ -1247,7 +1383,7 @@ func _blocked(pos: Vector2, radius: float) -> bool:
     if absf(pos.x) > WORLD_LIMIT or absf(pos.y) > WORLD_LIMIT:
         return true
     # На берег можно зайти немного, но глубже 0.45 м — нельзя.
-    if _is_lake(pos, radius - 0.45):
+    if _is_lake(pos, radius - 0.45) or _is_stream(pos, radius - 0.45):
         return true
     for obstacle in obstacles:
         if pos.distance_to(obstacle["pos"]) < radius + obstacle["radius"]:
@@ -1372,7 +1508,9 @@ func _physics_process(delta: float) -> void:
             status_message = "Слишком далеко — добыча прервана"
             _update_ui()
         else:
-            mining_progress += delta
+            var ore_kind: String = str(resources[target_resource]["kind"])
+            var ore_bonus := 1.7 if has_iron_tool and (ore_kind == "iron" or ore_kind == "silver" or ore_kind == "gold") else 1.0
+            mining_progress += delta * ore_bonus
             if not cooking_active:
                 progress_bar.visible = true
                 progress_bar.value = 100.0 * mining_progress / resources[target_resource]["duration"]
