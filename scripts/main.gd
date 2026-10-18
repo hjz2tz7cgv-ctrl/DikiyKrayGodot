@@ -87,7 +87,6 @@ var last_hint_message := ""
 var progress_bar: ProgressBar
 var bag_panel: PanelContainer
 var bag_label: Label
-var zoom_label: Label
 var action_button: Button
 var nearby_button: Button
 var nearby_touch_ids: Dictionary = {}
@@ -591,13 +590,7 @@ func _create_ui() -> void:
     bag_fly.add_theme_font_size_override("font_size", 27)
     bag_fly.mouse_filter = Control.MOUSE_FILTER_IGNORE
     root.add_child(bag_fly)
-    zoom_label = Label.new()
-    zoom_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    zoom_label.add_theme_font_size_override("font_size", 10)
-    zoom_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8, 0.38))
-    zoom_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    bottom.add_child(zoom_label)
     progress_bar = ProgressBar.new()
     progress_bar.max_value = 100
     progress_bar.custom_minimum_size.y = 22
@@ -666,7 +659,8 @@ func _create_ui() -> void:
         tool_button.custom_minimum_size = Vector2(58, 48)
         tool_button.focus_mode = Control.FOCUS_NONE
         tool_button.mouse_filter = Control.MOUSE_FILTER_STOP
-        tool_button.pressed.connect(_select_quick_tool.bind(tool_id))
+        tool_button.text = ""
+        tool_button.disabled = true
         quickbar.add_child(tool_button)
         quickbar_buttons[tool_id] = tool_button
     _refresh_quickbar()
@@ -774,7 +768,7 @@ func _select_quick_tool(tool_id: String) -> void:
     _update_ui()
 
 func _refresh_quickbar() -> void:
-    # Ячейки фиксированы: в начале видна только рука, остальные пустые.
+    # Только рука видна при старте. Прочие слоты полностью пустые до крафта.
     # После крафта инструменты занимают свободные ячейки по порядку.
     var owned_tools: Array[String] = ["hand"]
     if has_spear:
@@ -796,6 +790,9 @@ func _refresh_quickbar() -> void:
             button.pressed.connect(_select_quick_tool.bind(tool_id))
         else:
             button.text = ""
+            button.tooltip_text = ""
+            for connection in button.pressed.get_connections():
+                button.pressed.disconnect(connection["callable"])
             button.disabled = true
             button.modulate = Color(1, 1, 1)
 
@@ -879,7 +876,6 @@ func _update_ui() -> void:
         var hour := int(day_clock) % 24
         var minute := int((day_clock - floor(day_clock)) * 60.0)
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
-    zoom_label.text = "слева — ходьба  ·  справа — камера  ·  масштаб +/−"
     bag_label.text = "РЮКЗАК\nДерево: %d    Камень: %d\nЯгоды: %d    Грибы: %d\nМясо: %d    Жареное: %d\nШкуры: %d    Копьё: %s\nКирка: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["mushroom"], inventory["meat"], inventory["cooked_meat"], inventory["hide"], "есть" if has_spear else "нет", "есть" if has_pickaxe else "нет"]
     if quickbar != null:
         _refresh_quickbar()
