@@ -826,13 +826,14 @@ func _create_ui() -> void:
     bag_button.text = "Рюкзак"
     bag_button.custom_minimum_size = Vector2(145, 56)
     bag_button.pressed.connect(_toggle_bag)
-    top.add_child(bag_button)
+    # Кнопка будет расположена под мини-картой.
+
     craft_button = Button.new()
     craft_button.text = "Крафт"
     craft_button.custom_minimum_size = Vector2(110, 56)
     craft_button.pressed.connect(_toggle_craft)
     craft_button.visible = true
-    top.add_child(craft_button)
+
     time_label = Label.new()
     time_label.add_theme_font_size_override("font_size", 20)
     top.add_child(time_label)
@@ -918,7 +919,8 @@ func _create_ui() -> void:
     action_button.custom_minimum_size = Vector2(112, 52)
     action_button.focus_mode = Control.FOCUS_NONE
     action_button.pressed.connect(_open_action_menu)
-    top.add_child(action_button)
+    action_button.visible = false
+
     nearby_button = Button.new()
     nearby_button.text = "Действие рядом"
     nearby_button.custom_minimum_size = Vector2(0, 0)
@@ -957,6 +959,7 @@ func _create_ui() -> void:
         quickbar_buttons[tool_id] = tool_button
     _refresh_quickbar()
     _create_minimap(root)
+    _create_map_side_buttons(root)
     action_menu = PanelContainer.new()
     root.add_child(action_menu)
     action_menu.set_anchors_preset(Control.PRESET_CENTER)
@@ -981,8 +984,13 @@ func _create_ui() -> void:
     craft_panel.offset_top = -265
     craft_panel.offset_bottom = 265
     craft_panel.visible = false
+    var craft_scroll := ScrollContainer.new()
+    craft_scroll.custom_minimum_size = Vector2(310, 0)
+    craft_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    craft_panel.add_child(craft_scroll)
     var craft_col := VBoxContainer.new()
-    craft_panel.add_child(craft_col)
+    craft_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    craft_scroll.add_child(craft_col)
     var craft_title := Label.new()
     craft_title.text = "МАСТЕРСКАЯ\nИнструменты"
     craft_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1086,6 +1094,23 @@ func _create_minimap(root: Control) -> void:
         minimap.add_child(dot)
         minimap_dots.append(dot)
     _update_minimap()
+
+func _create_map_side_buttons(root: Control) -> void:
+    # Отдельная вертикальная колонка непосредственно под круглой мини-картой.
+    var side := VBoxContainer.new()
+    side.name = "MapSideActions"
+    side.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+    side.offset_left = -150.0
+    side.offset_right = -12.0
+    side.offset_top = 228.0
+    side.offset_bottom = 340.0
+    side.add_theme_constant_override("separation", 5)
+    root.add_child(side)
+    for b in [bag_button, craft_button]:
+        b.custom_minimum_size = Vector2(138, 49)
+        b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        b.focus_mode = Control.FOCUS_NONE
+        side.add_child(b)
 
 func _update_minimap() -> void:
     if minimap == null or player == null or minimap_dots.size() < 4:
@@ -1963,6 +1988,10 @@ func _input(event: InputEvent) -> void:
                 get_viewport().set_input_as_handled()
                 return
             if quickbar != null and quickbar.get_global_rect().has_point(event.position):
+                return
+            if bag_button != null and bag_button.get_global_rect().has_point(event.position):
+                return
+            if craft_button != null and craft_button.get_global_rect().has_point(event.position):
                 return
             active_touches[event.index] = event.position
             var viewport_width := get_viewport().get_visible_rect().size.x
