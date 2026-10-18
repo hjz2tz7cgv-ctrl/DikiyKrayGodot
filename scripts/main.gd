@@ -1053,8 +1053,8 @@ func _animate_pickup(delta: float) -> void:
         pickup_flight.clear()
         bag_fly.visible = false
         bag_fly.scale = Vector2.ONE
-        status_message = "В рюкзаке: +1 " + kind
-        _update_ui()
+        # Предмет уже зачислен и сообщение показано в _pickup_index().
+        # Здесь только завершаем анимацию, не обращаясь к локальной переменной kind.
 
 func _blocked(pos: Vector2, radius: float) -> bool:
     if absf(pos.x) > WORLD_LIMIT or absf(pos.y) > WORLD_LIMIT:
