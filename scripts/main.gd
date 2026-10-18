@@ -887,7 +887,15 @@ func _perform_nearby_action() -> void:
             var pos: Vector2 = drops[selected]["pos"]
             var here := Vector2(player.position.x, player.position.z)
             if here.distance_to(pos) <= 2.1:
-                _pickup_index(selected)
+                var selected_kind: String = str(drops[selected]["kind"])
+                if selected_kind == "meat" or selected_kind == "hide":
+                    var corpse_pos: Vector2 = drops[selected]["pos"]
+                    for j in range(drops.size() - 1, -1, -1):
+                        var other_kind: String = str(drops[j]["kind"])
+                        if (other_kind == "meat" or other_kind == "hide") and corpse_pos.distance_to(drops[j]["pos"]) <= 1.3:
+                            _pickup_index(j)
+                else:
+                    _pickup_index(selected)
             else:
                 status_message = "Подойди ближе к предмету"
     elif chosen == "resource":
@@ -1016,16 +1024,20 @@ func _pickup_index(index: int) -> void:
     if index < 0 or index >= drops.size():
         return
     var item: Dictionary = drops[index]
+    var kind: String = str(item["kind"])
     var world_pos: Vector3 = item["node"].global_position
     var start: Vector2 = camera.unproject_position(world_pos)
-    pickup_flight = {"kind": item["kind"], "start": start}
+    # Сразу зачисляем добычу: повторное касание не может потерять предмет,
+    # даже если анимация предыдущего предмета ещё не закончилась.
+    inventory[kind] = int(inventory.get(kind, 0)) + 1
+    pickup_flight = {"kind": kind, "start": start}
     pickup_time = 0.0
     bag_fly.text = "● +1"
     bag_fly.position = start
     bag_fly.visible = true
     item["node"].queue_free()
     drops.remove_at(index)
-    status_message = "Предмет летит в рюкзак…"
+    status_message = "В рюкзаке: +1 " + kind
     _update_ui()
 
 func _animate_pickup(delta: float) -> void:
@@ -1038,8 +1050,6 @@ func _animate_pickup(delta: float) -> void:
     bag_fly.position = start.lerp(end, t) + Vector2(0, -75.0 * sin(t * PI))
     bag_fly.scale = Vector2.ONE * (1.0 - 0.35 * t)
     if t >= 1.0:
-        var kind: String = pickup_flight["kind"]
-        inventory[kind] += 1
         pickup_flight.clear()
         bag_fly.visible = false
         bag_fly.scale = Vector2.ONE
