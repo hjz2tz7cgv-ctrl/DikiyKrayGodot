@@ -5,7 +5,7 @@ const WALK_SPEED := 5.0
 const PLAYER_RADIUS := 0.48
 const LAKE_CENTER := Vector2(18.0, -14.0)
 const LAKE_RADIUS := 9.0
-const WORLD_LIMIT := 64.0
+const WORLD_LIMIT := 240.0
 
 var player: CharacterBody3D
 var camera: Camera3D
@@ -20,7 +20,7 @@ var player_visual: Node3D
 var player_facing := 0.0
 const FIRE_POS := Vector2(-3.0, 4.0)
 const BENCH_POS := Vector2(-3.0, 7.1)
-const CABIN_POS := Vector2(-39.0, 27.0)
+const CABIN_POS := Vector2(-9.0, 31.0)
 var cabin_searched := false
 var cabin_note_found := false
 var campfire_node: Node3D
@@ -171,7 +171,7 @@ func _mesh_sphere(parent: Node3D, radius: float, pos: Vector3, color: Color, sca
     return mi
 
 func _create_world() -> void:
-    _mesh_box(self, Vector3(132, 0.3, 132), Vector3(0, -0.2, 0), Color("628a51"))
+    _mesh_box(self, Vector3(484, 0.3, 484), Vector3(0, -0.2, 0), Color("628a51"))
     var water := _mesh_sphere(self, LAKE_RADIUS, Vector3(LAKE_CENTER.x, -0.15, LAKE_CENTER.y), Color("3d9dc0"), Vector3(1.0, 0.018, 1.0))
     water.name = "Lake"
     var sun := DirectionalLight3D.new()
@@ -213,8 +213,8 @@ func _create_stream_and_hills() -> void:
             _mesh_sphere(section, 0.35, Vector3(2.05, 0.15, 0), Color("a2a69b"), Vector3(1.4, 0.45, 0.9))
         stream_points.append(Vector2(x, z))
     # Невысокие холмы и скальные выступы по краям карты.
-    for i in range(19):
-        var pos := Vector2(rng.randf_range(-56.0, 56.0), rng.randf_range(-56.0, 56.0))
+    for i in range(65):
+        var pos := _random_land_pos(228.0)
         if pos.length() < 16.0 or pos.distance_to(CABIN_POS) < 9.0 or _is_lake(pos, 5.0) or _is_stream(pos, 5.0):
             continue
         var hill := Node3D.new()
@@ -258,12 +258,12 @@ func _create_stream_crossings() -> void:
 func _create_ore() -> void:
     var types := ["iron", "silver", "gold"]
     var colors := [Color("9c6b51"), Color("c1c8d0"), Color("d5ad3b")]
-    for i in range(30):
-        var kind: String = types[0] if i < 18 else types[1] if i < 26 else types[2]
+    for i in range(75):
+        var kind: String = types[0] if i < 45 else types[1] if i < 65 else types[2]
         var pos := Vector2.ZERO
         var found := false
         for attempt in range(100):
-            pos = _random_land_pos(55.0)
+            pos = _random_land_pos(230.0)
             if _can_place(pos, 1.1) and (kind != "gold" or _is_stream(pos, 8.0)):
                 found = true
                 break
@@ -463,7 +463,7 @@ func _is_lake(pos: Vector2, margin := 0.0) -> bool:
     return pos.distance_to(LAKE_CENTER) < LAKE_RADIUS + margin
 
 func _can_place(pos: Vector2, radius: float) -> bool:
-    if _is_lake(pos, radius + 0.3) or _is_stream(pos, radius + 0.3) or pos.distance_to(CABIN_POS) < radius + 5.0:
+    if _is_lake(pos, radius + 0.3) or _is_stream(pos, radius + 0.3) or pos.distance_to(CABIN_POS) < radius + 7.0:
         return false
     if pos.length() < 3.3 or pos.distance_to(TENT_POS) < radius + 3.5 or pos.distance_to(FIRE_POS) < radius + 3.2 or pos.distance_to(BENCH_POS) < radius + 2.4:
         return false
@@ -472,13 +472,13 @@ func _can_place(pos: Vector2, radius: float) -> bool:
             return false
     return true
 
-func _random_land_pos(edge: float = 59.0) -> Vector2:
+func _random_land_pos(edge: float = 231.0) -> Vector2:
     return Vector2(rng.randf_range(-edge, edge), rng.randf_range(-edge, edge))
 
 func _create_resources() -> void:
     # Больше ресурсов, но без тяжёлых импортированных моделей.
-    for i in range(112):
-        var kind := "tree" if i < 72 else "rock"
+    for i in range(380):
+        var kind := "tree" if i < 240 else "rock"
         var radius := 0.85 if kind == "tree" else (0.48 if i % 3 == 0 else 0.9)
         var pos := Vector2.ZERO
         var found := false
@@ -557,14 +557,11 @@ func _create_scenery() -> void:
 func _create_forest_paths() -> void:
     # Светлая извилистая тропа от лагеря к заброшенной хижине.
     # Плоские пятна не блокируют движение и не требуют текстур.
-    # Тропа проходит через существующий мост при Z=23, не по воде.
-    var bridge_z := 23.0
-    var bridge_x := _stream_center_x(bridge_z)
+    # Хижина стоит на восточном берегу; тропа не пересекает воду.
     var waypoints: Array[Vector2] = [
         Vector2(-7.0, 8.0),
-        Vector2(bridge_x + 5.2, bridge_z),
-        Vector2(bridge_x, bridge_z),
-        Vector2(bridge_x - 5.2, bridge_z),
+        Vector2(-10.0, 16.0),
+        Vector2(-8.0, 23.0),
         CABIN_POS + Vector2(0.0, -3.5)
     ]
     for segment in range(waypoints.size() - 1):
@@ -582,8 +579,8 @@ func _create_forest_paths() -> void:
             add_child(patch)
             _mesh_sphere(patch, 0.7, Vector3.ZERO, Color("a28e63"), Vector3(1.2, 0.018, 0.8))
     # Заросли папоротника у тропы и в лесу.
-    for i in range(85):
-        var pos := _random_land_pos(56.0)
+    for i in range(190):
+        var pos := _random_land_pos(230.0)
         if pos.distance_to(TENT_POS) < 6.0 or pos.distance_to(BENCH_POS) < 5.0 or pos.distance_to(CABIN_POS) < 4.0:
             continue
         if _is_lake(pos, 0.5) or _is_stream(pos, 0.5):
@@ -600,6 +597,10 @@ func _create_abandoned_cabin() -> void:
     # Исследуемая хижина. Вход со стороны юга, поэтому нет сплошной передней стены.
     var cabin := Node3D.new()
     cabin.name = "AbandonedCabin"
+    # Защита от случайного переноса постройки в воду при следующих обновлениях.
+    if _is_lake(CABIN_POS, 5.0) or _is_stream(CABIN_POS, 5.0):
+        push_error("Хижина попала в воду: измените CABIN_POS")
+        return
     cabin.position = Vector3(CABIN_POS.x, 0.0, CABIN_POS.y)
     add_child(cabin)
     _mesh_box(cabin, Vector3(5.8, 0.22, 4.7), Vector3(0, 0.12, 0), Color("5e4934"))
@@ -625,12 +626,12 @@ func _create_abandoned_cabin() -> void:
 
 func _create_animals() -> void:
     # Зайцы, олени и кабаны мирно бродят по миру.
-    for i in range(19):
-        var pos := _random_land_pos(53.0)
+    for i in range(32):
+        var pos := _random_land_pos(226.0)
         for attempt in range(40):
             if not _is_lake(pos, 1.5) and not _blocked(pos, 0.8):
                 break
-            pos = _random_land_pos(53.0)
+            pos = _random_land_pos(226.0)
         if _blocked(pos, 0.8):
             continue
         var animal := Node3D.new()
