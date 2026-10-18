@@ -47,6 +47,7 @@ var iron_recipe_button: Button
 var minimap: Control
 var minimap_dots: Array[Control] = []
 var stream_points: Array[Vector2] = []
+var crossing_z_positions: Array[float] = [-37.0, -7.0, 23.0, 43.0]
 # Панель быстрого доступа: инструменты остаются собственностью игрока,
 # но выбираются здесь, без открытия рюкзака.
 var equipped_tool := "hand"
@@ -123,6 +124,7 @@ func _ready() -> void:
     rng.seed = 20261017
     _create_world()
     _create_stream_and_hills()
+    _create_stream_crossings()
     _create_tent()
     _create_camp()
     _create_player()
@@ -218,6 +220,35 @@ func _create_stream_and_hills() -> void:
         if i % 2 == 0:
             _mesh_sphere(hill, radius * 0.57, Vector3(radius * 0.28, radius * 0.25, 0), Color("7d8580"), Vector3(1.1, 0.65, 0.9))
         obstacles.append({"pos": pos, "radius": radius * 0.72, "node": hill})
+
+func _on_stream_crossing(pos: Vector2, radius: float = 0.0) -> bool:
+    # Проход разрешён только по настилу или поваленному дереву.
+    for z in crossing_z_positions:
+        if absf(pos.y - z) <= 0.95 - radius * 0.15 and absf(pos.x - _stream_center_x(z)) <= 4.25:
+            return true
+    return false
+
+func _create_stream_crossings() -> void:
+    # Два деревянных мостика и два поваленных ствола над ручьём.
+    for i in range(crossing_z_positions.size()):
+        var z: float = crossing_z_positions[i]
+        var x := _stream_center_x(z)
+        var crossing := Node3D.new()
+        crossing.name = "Bridge_%d" % i if i % 2 == 0 else "Fallen_Log_%d" % i
+        crossing.position = Vector3(x, 0.0, z)
+        add_child(crossing)
+        if i % 2 == 0:
+            # Дощатый мост: поперечные доски и две продольные балки.
+            for plank in range(9):
+                _mesh_box(crossing, Vector3(0.76, 0.18, 1.8), Vector3(-3.2 + float(plank) * 0.8, 0.18, 0), Color("9b7148"))
+            for side in [-0.72, 0.72]:
+                _mesh_box(crossing, Vector3(7.4, 0.25, 0.19), Vector3(0, 0.03, side), Color("65462f"))
+        else:
+            # Толстый ствол и небольшие ветви; широкая невидимая зона прохода.
+            var trunk := _mesh_box(crossing, Vector3(8.1, 0.65, 1.25), Vector3(0, 0.23, 0), Color("76513a"))
+            trunk.rotation.x = 0.06
+            for branch_x in [-2.4, 2.1]:
+                _mesh_box(crossing, Vector3(0.32, 0.28, 1.85), Vector3(branch_x, 0.47, 0.45), Color("64422d"))
 
 func _create_ore() -> void:
     var types := ["iron", "silver", "gold"]
@@ -1028,7 +1059,7 @@ func _sit_on_bench() -> void:
     player.position.x = BENCH_POS.x
     player.position.z = BENCH_POS.y - 0.15
     player_visual.position.y = -0.35
-    # Face the fire while cooking.
+    # Сидя на лавочке, персонаж смотрит на костёр.
     player_facing = PI
 
 func _finish_cooking() -> void:
@@ -1053,6 +1084,12 @@ func _survival_action(kind: String) -> void:
             status_message = "Набрана вода во флягу (%d/5)" % water_portions
         else:
             status_message = "Подойди к берегу озера"
+    elif kind == "rest":
+        if here.distance_to(BENCH_POS) <= 3.0 and not cooking_active:
+            _sit_on_bench()
+            status_message = "Сидим на скамейке и смотрим на костёр. Двигайся, чтобы встать"
+        else:
+            status_message = "Подойди к скамейке у костра"
     elif kind == "cook":
         if here.distance_to(FIRE_POS) > 3.2:
             status_message = "Готовить мясо можно только у костра"
@@ -1101,6 +1138,10 @@ func _open_action_menu() -> void:
         _add_action_option("Съесть жареное мясо", "cooked_meat")
     if water_portions > 0:
         _add_action_option("Попить воды (%d)" % water_portions, "drink")
+    if Vector2(player.position.x, player.position.z).distance_to(FIRE_POS) <= 3.5:
+        _add_action_option("Пожарить мясо и сесть", "cook")
+    if Vector2(player.position.x, player.position.z).distance_to(BENCH_POS) <= 3.0 and not sitting:
+        _add_action_option("Сесть и отдохнуть у костра", "rest")
     _add_action_option("Крафт", "craft")
     var close := Button.new()
     close.text = "Закрыть"
@@ -1147,6 +1188,9 @@ func _update_nearby_action() -> void:
     if here.distance_to(TENT_POS) <= 2.8:
         nearby_action_kind = "tent"
         nearby_button.text = "Отдохнуть в палатке"
+    elif here.distance_to(BENCH_POS) <= 2.8 and not cooking_active:
+        nearby_action_kind = "rest"
+        nearby_button.text = "Сесть на скамейку и отдохнуть"
     elif here.distance_to(FIRE_POS) <= 3.2:
         nearby_action_kind = "cook"
         nearby_button.text = "Мясо жарится…" if cooking_active else "Пожарить мясо и сесть"
@@ -1195,6 +1239,8 @@ func _perform_nearby_action() -> void:
             _show_sleep_panel()
         else:
             status_message = "Подойди ближе к палатке"
+    elif chosen == "rest":
+        _survival_action("rest")
     elif chosen == "cook":
         _survival_action("cook")
     elif chosen == "water":
@@ -1383,7 +1429,9 @@ func _blocked(pos: Vector2, radius: float) -> bool:
     if absf(pos.x) > WORLD_LIMIT or absf(pos.y) > WORLD_LIMIT:
         return true
     # На берег можно зайти немного, но глубже 0.45 м — нельзя.
-    if _is_lake(pos, radius - 0.45) or _is_stream(pos, radius - 0.45):
+    if _is_lake(pos, radius - 0.45):
+        return true
+    if _is_stream(pos, radius - 0.45) and not _on_stream_crossing(pos, radius):
         return true
     for obstacle in obstacles:
         if pos.distance_to(obstacle["pos"]) < radius + obstacle["radius"]:
