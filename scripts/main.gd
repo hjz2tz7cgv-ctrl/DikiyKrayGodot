@@ -25,6 +25,11 @@ var campfire_light: OmniLight3D
 var fire_flames: Array[MeshInstance3D] = []
 var sitting := false
 var camp_time := 0.0
+const COOK_SECONDS := 11.0
+var cooking_active := false
+var cooking_elapsed := 0.0
+var leg_left: Node3D
+var leg_right: Node3D
 var obstacles: Array[Dictionary] = []
 var resources: Array[Dictionary] = []
 var drops: Array[Dictionary] = []
@@ -68,6 +73,10 @@ var bag_button: Button
 var bag_fly: Label
 var hud: CanvasLayer
 var info_label: Label
+var hint_panel: PanelContainer
+var hint_label: Label
+var hint_tween: Tween
+var last_hint_message := ""
 var progress_bar: ProgressBar
 var bag_panel: PanelContainer
 var bag_label: Label
@@ -299,6 +308,15 @@ func _create_player() -> void:
     _mesh_sphere(player_visual, 0.55, Vector3(0, 0.0, 0), Color("d7a579"), Vector3(0.8, 1.25, 0.7))
     _mesh_sphere(player_visual, 0.34, Vector3(0, 0.9, 0), Color("edc59b"))
     _mesh_box(player_visual, Vector3(0.7, 0.15, 0.18), Vector3(0, 0.5, -0.3), Color("4c7050"))
+    # Separate legs swing gently while sitting on the bench.
+    leg_left = Node3D.new()
+    leg_right = Node3D.new()
+    player_visual.add_child(leg_left)
+    player_visual.add_child(leg_right)
+    leg_left.position = Vector3(-0.22, -0.34, -0.08)
+    leg_right.position = Vector3(0.22, -0.34, -0.08)
+    _mesh_box(leg_left, Vector3(0.22, 0.63, 0.23), Vector3(0, -0.31, 0), Color("4c7050"))
+    _mesh_box(leg_right, Vector3(0.22, 0.63, 0.23), Vector3(0, -0.31, 0), Color("4c7050"))
 
 func _create_camera() -> void:
     camera = Camera3D.new()
@@ -475,6 +493,31 @@ func _create_ui() -> void:
     info_label.add_theme_font_size_override("font_size", 24)
     info_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     top.add_child(info_label)
+    # Центральная подсказка поверх мира. Не перехватывает касания джойстика.
+    var hint_layer := CanvasLayer.new()
+    hint_layer.layer = 25
+    add_child(hint_layer)
+    var hint_root := Control.new()
+    hint_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    hint_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    hint_layer.add_child(hint_root)
+    hint_panel = PanelContainer.new()
+    hint_panel.set_anchors_preset(Control.PRESET_CENTER)
+    hint_panel.offset_left = -210.0
+    hint_panel.offset_right = 210.0
+    hint_panel.offset_top = -42.0
+    hint_panel.offset_bottom = 42.0
+    hint_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    hint_panel.modulate.a = 0.0
+    hint_panel.visible = false
+    hint_root.add_child(hint_panel)
+    hint_label = Label.new()
+    hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    hint_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    hint_label.add_theme_font_size_override("font_size", 23)
+    hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    hint_panel.add_child(hint_label)
     bag_button = Button.new()
     bag_button.text = "Рюкзак"
     bag_button.custom_minimum_size = Vector2(145, 56)
@@ -714,8 +757,25 @@ func _zoom(amount: float) -> void:
     # Обновление камеры только в физическом кадре: без скачка при нажатии кнопки.
     _update_ui()
 
+func _show_center_hint(message: String) -> void:
+    if hint_panel == null or hint_label == null or message.is_empty():
+        return
+    if hint_tween != null and hint_tween.is_running():
+        hint_tween.kill()
+    hint_label.text = message
+    hint_panel.visible = true
+    hint_panel.modulate.a = 0.0
+    hint_tween = create_tween()
+    hint_tween.tween_property(hint_panel, "modulate:a", 1.0, 0.35)
+    hint_tween.tween_interval(2.3)
+    hint_tween.tween_property(hint_panel, "modulate:a", 0.0, 0.45)
+    hint_tween.tween_callback(func() -> void: hint_panel.visible = false)
+
 func _update_ui() -> void:
-    info_label.text = "ДИКИЙ КРАЙ 3D   |   " + status_message
+    info_label.text = "ДИКИЙ КРАЙ 3D"
+    if status_message != last_hint_message:
+        last_hint_message = status_message
+        _show_center_hint(status_message)
     if survival_label != null:
         survival_label.text = "🍖 Голод: %d%%    💧 Жажда: %d%%" % [int(hunger), int(thirst)]
     if time_label != null:
@@ -727,6 +787,24 @@ func _update_ui() -> void:
     if craft_recipe_button != null:
         craft_recipe_button.text = "Копьё уже создано" if has_spear else "Создать копьё (3 дерева + 1 камень)"
         craft_recipe_button.disabled = has_spear or inventory["wood"] < 3 or inventory["stone"] < 1
+
+func _sit_on_bench() -> void:
+    sitting = true
+    pending_index = -1
+    pending_kind = ""
+    hunt_target = -1
+    player.position.x = BENCH_POS.x
+    player.position.z = BENCH_POS.y - 0.15
+    player_visual.position.y = -0.35
+    # Face the fire while cooking.
+    player_facing = PI
+
+func _finish_cooking() -> void:
+    cooking_active = false
+    cooking_elapsed = 0.0
+    inventory["cooked_meat"] += 1
+    status_message = "Мясо готово! +1 жареное мясо в рюкзаке"
+    progress_bar.visible = false
 
 func _survival_action(kind: String) -> void:
     var here := Vector2(player.position.x, player.position.z)
@@ -749,10 +827,15 @@ func _survival_action(kind: String) -> void:
         elif inventory["meat"] < 1 or inventory["wood"] < 1:
             status_message = "Для жарки нужны 1 мясо и 1 дерево"
         else:
-            inventory["meat"] -= 1
-            inventory["wood"] -= 1
-            inventory["cooked_meat"] += 1
-            status_message = "Мясо приготовлено!"
+            if cooking_active:
+                status_message = "Мясо уже жарится у костра"
+            else:
+                inventory["meat"] -= 1
+                inventory["wood"] -= 1
+                cooking_active = true
+                cooking_elapsed = 0.0
+                _sit_on_bench()
+                status_message = "Жарим мясо 11 секунд — отдыхаем на лавочке"
     elif inventory.get(kind, 0) <= 0:
         status_message = "Такой еды пока нет в рюкзаке"
     else:
@@ -834,7 +917,7 @@ func _update_nearby_action() -> void:
         nearby_button.text = "Отдохнуть в палатке"
     elif here.distance_to(FIRE_POS) <= 3.2:
         nearby_action_kind = "cook"
-        nearby_button.text = "Пожарить мясо у костра"
+        nearby_button.text = "Мясо жарится…" if cooking_active else "Пожарить мясо и сесть"
     elif here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 1.3:
         nearby_action_kind = "water"
         nearby_button.text = "Набрать воды"
@@ -1071,6 +1154,19 @@ func _physics_process(delta: float) -> void:
     if sleep_in_progress:
         _advance_sleep(delta)
         return
+    if cooking_active:
+        cooking_elapsed += delta
+        progress_bar.visible = true
+        progress_bar.value = 100.0 * minf(1.0, cooking_elapsed / COOK_SECONDS)
+        if cooking_elapsed >= COOK_SECONDS:
+            _finish_cooking()
+    if sitting and leg_left != null and leg_right != null:
+        camp_time += delta
+        leg_left.rotation.x = sin(camp_time * 4.0) * 0.32
+        leg_right.rotation.x = sin(camp_time * 4.0 + PI) * 0.32
+    elif leg_left != null and leg_right != null:
+        leg_left.rotation.x = 0.0
+        leg_right.rotation.x = 0.0
     _animate_camp(delta)
     hunger = maxf(0.0, hunger - delta * 0.035)
     thirst = maxf(0.0, thirst - delta * 0.055)
@@ -1090,10 +1186,7 @@ func _physics_process(delta: float) -> void:
             elif pending_kind == "tent":
                 _show_sleep_panel()
             elif pending_kind == "bench":
-                sitting = true
-                player.position.x = BENCH_POS.x
-                player.position.z = BENCH_POS.y - 0.15
-                player_visual.position.y = -0.35
+                _sit_on_bench()
                 status_message = "Отдыхаем у костра — двигайся, чтобы встать"
             pending_index = -1
             pending_kind = ""
@@ -1143,7 +1236,9 @@ func _physics_process(delta: float) -> void:
         var keyboard_facing := atan2(-direction.x, -direction.y)
         player_facing = lerp_angle(player_facing, keyboard_facing, 1.0 - exp(-10.0 * delta))
     direction = direction.limit_length(1.0)
-    if sitting and (direction.length() > 0.1 or steering_active):
+    if cooking_active:
+        direction = Vector2.ZERO
+    if sitting and not cooking_active and (direction.length() > 0.1 or steering_active):
         sitting = false
         player_visual.position.y = 0.0
     if sitting:
@@ -1163,7 +1258,7 @@ func _physics_process(delta: float) -> void:
     player.position.x = current.x
     player.position.z = current.y
     _position_camera(delta)
-    if gather_touch != -1 and gather_direction.length() > 0.2 and not mining_active:
+    if gather_touch != -1 and gather_direction.length() > 0.2 and not mining_active and not cooking_active:
         var nearest := _nearest_resource()
         if nearest >= 0:
             _begin_mining(nearest)
@@ -1174,8 +1269,9 @@ func _physics_process(delta: float) -> void:
             _update_ui()
         else:
             mining_progress += delta
-            progress_bar.visible = true
-            progress_bar.value = 100.0 * mining_progress / resources[target_resource]["duration"]
+            if not cooking_active:
+                progress_bar.visible = true
+                progress_bar.value = 100.0 * mining_progress / resources[target_resource]["duration"]
             if mining_progress >= resources[target_resource]["duration"]:
                 _finish_mining()
     _move_animals(delta)
