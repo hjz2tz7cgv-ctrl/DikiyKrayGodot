@@ -41,6 +41,8 @@ var thirst := 100.0
 var survival_label: Label
 var survival_buttons: Array[Button] = []
 var has_spear := false
+var has_pickaxe := false
+var pickaxe_recipe_button: Button
 var hunt_target := -1
 var attack_cooldown := 0.0
 var craft_button: Button
@@ -370,7 +372,7 @@ func _create_resources() -> void:
     # Больше ресурсов, но без тяжёлых импортированных моделей.
     for i in range(112):
         var kind := "tree" if i < 72 else "rock"
-        var radius := 0.85 if kind == "tree" else 0.7
+        var radius := 0.85 if kind == "tree" else (0.48 if i % 3 == 0 else 0.9)
         var pos := Vector2.ZERO
         var found := false
         for attempt in range(90):
@@ -402,10 +404,12 @@ func _create_resources() -> void:
                 _mesh_sphere(node, 1.05, Vector3(0, 2.9 * tall, 0), Color("317049"), Vector3(0.9, 1.45, 0.9))
                 _mesh_sphere(node, 0.7, Vector3(0, 3.7 * tall, 0), Color("28643e"))
         else:
-            var rock_color := Color("929c9a") if i % 3 else Color("777f86")
-            _mesh_sphere(node, rng.randf_range(0.65, 1.05), Vector3(0, 0.55, 0), rock_color, Vector3(1.1, 0.65, 0.9))
+            var small_rock := i % 3 == 0
+            var rock_color := Color("929c9a") if not small_rock else Color("777f86")
+            var rock_size := rng.randf_range(0.32, 0.48) if small_rock else rng.randf_range(0.95, 1.4)
+            _mesh_sphere(node, rock_size, Vector3(0, rock_size * 0.55, 0), rock_color, Vector3(1.1, 0.65, 0.9))
         obstacles.append({"pos": pos, "radius": radius, "node": node})
-        resources.append({"kind": kind, "pos": pos, "node": node, "duration": 2.4 if kind == "tree" else 3.4, "alive": true})
+        resources.append({"kind": kind, "pos": pos, "node": node, "duration": 2.4 if kind == "tree" else (1.3 if i % 3 == 0 else 5.0), "large": kind == "rock" and i % 3 != 0, "alive": true})
     for i in range(48):
         var pos := _random_land_pos()
         if not _can_place(pos, 0.4):
@@ -666,18 +670,22 @@ func _create_ui() -> void:
     var craft_col := VBoxContainer.new()
     craft_panel.add_child(craft_col)
     var craft_title := Label.new()
-    craft_title.text = "МАСТЕРСКАЯ\nДеревянное копьё"
+    craft_title.text = "МАСТЕРСКАЯ\nИнструменты"
     craft_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     craft_title.add_theme_font_size_override("font_size", 25)
     craft_col.add_child(craft_title)
     var craft_description := Label.new()
-    craft_description.text = "Для охоты\nНужно: 3 дерева и 1 камень"
+    craft_description.text = "Копьё — для охоты. Кирка — для крупных камней."
     craft_description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     craft_col.add_child(craft_description)
     craft_recipe_button = Button.new()
     craft_recipe_button.custom_minimum_size.y = 55
     craft_recipe_button.pressed.connect(_craft_spear)
     craft_col.add_child(craft_recipe_button)
+    pickaxe_recipe_button = Button.new()
+    pickaxe_recipe_button.custom_minimum_size.y = 55
+    pickaxe_recipe_button.pressed.connect(_craft_pickaxe)
+    craft_col.add_child(pickaxe_recipe_button)
     var craft_close := Button.new()
     craft_close.text = "Закрыть"
     craft_close.custom_minimum_size.y = 48
@@ -730,6 +738,18 @@ func _craft_spear() -> void:
         status_message = "Деревянное копьё готово! Нажми на животное"
     else:
         status_message = "Для копья нужны 3 дерева и 1 камень"
+    _update_ui()
+
+func _craft_pickaxe() -> void:
+    if has_pickaxe:
+        status_message = "Кирка уже изготовлена"
+    elif inventory["wood"] >= 3 and inventory["stone"] >= 2:
+        inventory["wood"] -= 3
+        inventory["stone"] -= 2
+        has_pickaxe = true
+        status_message = "Кирка готова! Теперь можно добывать крупные камни"
+    else:
+        status_message = "Для кирки нужны 3 дерева и 2 камня"
     _update_ui()
 
 func _finish_hunt(index: int) -> void:
@@ -787,10 +807,13 @@ func _update_ui() -> void:
         var minute := int((day_clock - floor(day_clock)) * 60.0)
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
     zoom_label.text = "Слева — ходьба  •  Справа — камера  •  Масштаб: + / −"
-    bag_label.text = "РЮКЗАК\nДерево: %d    Камень: %d\nЯгоды: %d    Грибы: %d\nМясо: %d    Жареное: %d\nШкуры: %d    Копьё: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["mushroom"], inventory["meat"], inventory["cooked_meat"], inventory["hide"], "есть" if has_spear else "нет"]
+    bag_label.text = "РЮКЗАК\nДерево: %d    Камень: %d\nЯгоды: %d    Грибы: %d\nМясо: %d    Жареное: %d\nШкуры: %d    Копьё: %s\nКирка: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["mushroom"], inventory["meat"], inventory["cooked_meat"], inventory["hide"], "есть" if has_spear else "нет", "есть" if has_pickaxe else "нет"]
     if craft_recipe_button != null:
         craft_recipe_button.text = "Копьё уже создано" if has_spear else "Создать копьё (3 дерева + 1 камень)"
         craft_recipe_button.disabled = has_spear or inventory["wood"] < 3 or inventory["stone"] < 1
+    if pickaxe_recipe_button != null:
+        pickaxe_recipe_button.text = "Кирка уже создана" if has_pickaxe else "Создать кирку (3 дерева + 2 камня)"
+        pickaxe_recipe_button.disabled = has_pickaxe or inventory["wood"] < 3 or inventory["stone"] < 2
 
 func _sit_on_bench() -> void:
     sitting = true
@@ -946,7 +969,7 @@ func _update_nearby_action() -> void:
                 if kind == "tree":
                     nearby_button.text = "Срубить дерево"
                 elif kind == "rock":
-                    nearby_button.text = "Добыть камень"
+                    nearby_button.text = "Добыть крупный камень (кирка)" if resources[index].get("large", false) else "Подобрать маленький камень"
                 elif kind == "berry":
                     nearby_button.text = "Собрать ягоды"
                 elif kind == "mushroom":
@@ -1078,6 +1101,12 @@ func _tap_world(screen: Vector2) -> void:
     _update_ui()
 
 func _begin_mining(index: int) -> void:
+    if index < 0 or index >= resources.size() or not bool(resources[index]["alive"]):
+        return
+    if resources[index]["kind"] == "rock" and bool(resources[index].get("large", false)) and not has_pickaxe:
+        status_message = "Для большого камня нужна кирка (крафт: 3 дерева + 2 камня)"
+        _update_ui()
+        return
     target_resource = index
     mining_active = true
     mining_progress = 0.0
