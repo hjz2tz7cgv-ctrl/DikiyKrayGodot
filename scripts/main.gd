@@ -590,7 +590,8 @@ func _create_ui() -> void:
     nearby_button.offset_right = 112.0
     nearby_button.offset_top = -150.0
     nearby_button.offset_bottom = -110.0
-    nearby_button.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    nearby_button.mouse_filter = Control.MOUSE_FILTER_STOP
+    nearby_button.pressed.connect(_perform_nearby_action)
     action_menu = PanelContainer.new()
     root.add_child(action_menu)
     action_menu.set_anchors_preset(Control.PRESET_CENTER)
@@ -1200,15 +1201,17 @@ func _move_animals(delta: float) -> void:
 func _input(event: InputEvent) -> void:
     if event is InputEventScreenTouch:
         if event.pressed:
+            # Сначала перехватываем нажатие на кнопку, ДО джойстика и камеры.
+            # Запоминаем палец и выполняем действие при отпускании.
+            if nearby_button != null and nearby_button.visible and nearby_button.get_global_rect().has_point(event.position):
+                nearby_touch_ids[event.index] = true
+                get_viewport().set_input_as_handled()
+                return
             active_touches[event.index] = event.position
             var viewport_width := get_viewport().get_visible_rect().size.x
             var viewport_height := get_viewport().get_visible_rect().size.y
             # Не захватываем касания по контекстной кнопке действий.
             if action_button != null and action_button.visible and Rect2(action_button.global_position, action_button.size).has_point(event.position):
-                return
-            if nearby_button != null and nearby_button.visible and nearby_button.get_global_rect().has_point(event.position):
-                nearby_touch_ids[event.index] = true
-                _perform_nearby_action()
                 return
             # Верхняя центральная область отдана кнопкам + и −.
             if event.position.y < 70.0 and absf(event.position.x - viewport_width * 0.5) < 80.0:
@@ -1227,6 +1230,9 @@ func _input(event: InputEvent) -> void:
             active_touches.erase(event.index)
             if nearby_touch_ids.has(event.index):
                 nearby_touch_ids.erase(event.index)
+                if nearby_button != null and nearby_button.visible and nearby_button.get_global_rect().has_point(event.position):
+                    _perform_nearby_action()
+                get_viewport().set_input_as_handled()
                 return
             if event.index == joystick_touch:
                 joystick_touch = -1
@@ -1243,6 +1249,9 @@ func _input(event: InputEvent) -> void:
             elif active_touches.is_empty() and not (event.position.y < 70.0 and absf(event.position.x - get_viewport().get_visible_rect().size.x * 0.5) < 80.0):
                 _tap_world(event.position)
     elif event is InputEventScreenDrag:
+        if nearby_touch_ids.has(event.index):
+            get_viewport().set_input_as_handled()
+            return
         # Пальцы независимы: левый всегда двигает героя, правый — камеру.
         # Используем координаты КОНКРЕТНОГО пальца, не event.relative,
         # который в мобильном браузере может прыгать при двух касаниях.
