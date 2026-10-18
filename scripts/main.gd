@@ -600,7 +600,9 @@ func _create_abandoned_cabin() -> void:
     _mesh_box(cabin, Vector3(1.2, 0.7, 0.7), Vector3(0.4, 0.49, 0.6), Color("836044"))
     _mesh_box(cabin, Vector3(0.85, 0.14, 0.8), Vector3(0.4, 0.91, 0.6), Color("b19b6c"))
     # Стены учитываются как препятствия, но вход открыт.
-    for offset, radius in [[Vector2(-2.75, 0), 0.7], [Vector2(2.75, 0), 0.7], [Vector2(0, 2.25), 0.7], [Vector2(-1.9, -2.25), 0.5], [Vector2(1.9, -2.25), 0.5]]:
+    for wall_data in [[Vector2(-2.75, 0), 0.7], [Vector2(2.75, 0), 0.7], [Vector2(0, 2.25), 0.7], [Vector2(-1.9, -2.25), 0.5], [Vector2(1.9, -2.25), 0.5]]:
+        var offset: Vector2 = wall_data[0]
+        var radius: float = wall_data[1]
         obstacles.append({"pos": CABIN_POS + offset, "radius": radius, "node": cabin})
 
 func _create_animals() -> void:
