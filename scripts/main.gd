@@ -579,23 +579,14 @@ func _create_ui() -> void:
     nearby_button.focus_mode = Control.FOCUS_NONE
     nearby_button.visible = false
     nearby_button.pressed.connect(_perform_nearby_action)
-    # Отдельный слой поверх HUD: кнопку не перекроют панели или фон.
-    var nearby_layer := CanvasLayer.new()
-    nearby_layer.layer = 15
-    add_child(nearby_layer)
-    var nearby_root := Control.new()
-    nearby_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-    nearby_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    nearby_layer.add_child(nearby_root)
-    nearby_root.add_child(nearby_button)
-    nearby_button.anchor_left = 0.5
-    nearby_button.anchor_right = 0.5
-    nearby_button.anchor_top = 1.0
-    nearby_button.anchor_bottom = 1.0
-    nearby_button.offset_left = -130.0
-    nearby_button.offset_right = 130.0
-    nearby_button.offset_top = -180.0
-    nearby_button.offset_bottom = -122.0
+    # Используем тот же HUD, что и работающие кнопки «Рюкзак» и «Действие».
+    # Якоря задаются относительно реального размера экрана.
+    root.add_child(nearby_button)
+    nearby_button.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+    nearby_button.offset_left = -150.0
+    nearby_button.offset_right = 150.0
+    nearby_button.offset_top = -145.0
+    nearby_button.offset_bottom = -85.0
     nearby_button.mouse_filter = Control.MOUSE_FILTER_STOP
     action_menu = PanelContainer.new()
     root.add_child(action_menu)
@@ -827,14 +818,25 @@ func _update_nearby_action() -> void:
     if nearby_button == null or player == null:
         return
     nearby_action_kind = ""
-    nearby_button.visible = false
+    nearby_button.hide()
     if bag_panel.visible or action_menu.visible or craft_panel.visible or sleep_panel.visible or sleep_in_progress:
         return
     var here := Vector2(player.global_position.x, player.global_position.z)
-    if here.distance_to(FIRE_POS) <= 4.0:
+    # Выпавшие предметы собираются отдельной кнопкой после добычи.
+    var closest_drop := -1
+    var drop_distance := 4.0
+    for i in range(drops.size()):
+        var d: float = here.distance_to(drops[i]["pos"])
+        if d < drop_distance:
+            drop_distance = d
+            closest_drop = i
+    if closest_drop >= 0:
+        nearby_action_kind = "drop"
+        nearby_button.text = "Собрать выпавший предмет"
+    elif here.distance_to(FIRE_POS) <= 5.5:
         nearby_action_kind = "cook"
         nearby_button.text = "Пожарить мясо у костра"
-    elif here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 2.5:
+    elif here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 4.5:
         nearby_action_kind = "water"
         nearby_button.text = "Набрать воды"
     else:
@@ -843,32 +845,42 @@ func _update_nearby_action() -> void:
             nearby_action_kind = "resource"
             var kind: String = resources[index]["kind"]
             if kind == "tree":
-                nearby_button.text = "Добыть дерево"
+                nearby_button.text = "Срубить дерево"
             elif kind == "rock":
                 nearby_button.text = "Добыть камень"
             elif kind == "berry":
                 nearby_button.text = "Собрать ягоды"
             elif kind == "mushroom":
                 nearby_button.text = "Собрать грибы"
-            else:
-                nearby_button.text = "Собрать ресурс"
-    nearby_button.visible = nearby_action_kind != ""
+    if nearby_action_kind != "":
+        nearby_button.show()
 
 func _perform_nearby_action() -> void:
-    # Повторно проверяем дистанцию в момент нажатия.
     _update_nearby_action()
     if nearby_action_kind == "cook":
         _survival_action("cook")
     elif nearby_action_kind == "water":
         _survival_action("water")
+    elif nearby_action_kind == "drop":
+        var here := Vector2(player.global_position.x, player.global_position.z)
+        var closest := -1
+        var best := 4.0
+        for i in range(drops.size()):
+            var d: float = here.distance_to(drops[i]["pos"])
+            if d < best:
+                best = d
+                closest = i
+        if closest >= 0:
+            _pickup_index(closest)
     elif nearby_action_kind == "resource":
         var index := _nearest_resource()
         if index >= 0:
             _begin_mining(index)
+    _update_nearby_action()
 
 func _nearest_resource() -> int:
     var closest := -1
-    var best := 2.8
+    var best := 4.5
     var p := Vector2(player.position.x, player.position.z)
     for i in range(resources.size()):
         if not resources[i]["alive"]:
@@ -1120,10 +1132,8 @@ func _physics_process(delta: float) -> void:
         var nearest := _nearest_resource()
         if nearest >= 0:
             _begin_mining(nearest)
-    if gather_touch != -1 and gather_direction.length() <= 0.2 and mining_active:
-        _stop_mining()
     if mining_active:
-        if target_resource < 0 or not resources[target_resource]["alive"] or Vector2(player.position.x, player.position.z).distance_to(resources[target_resource]["pos"]) > 2.85:
+        if target_resource < 0 or not resources[target_resource]["alive"] or Vector2(player.position.x, player.position.z).distance_to(resources[target_resource]["pos"]) > 4.6:
             _stop_mining()
             status_message = "Слишком далеко — добыча прервана"
             _update_ui()
