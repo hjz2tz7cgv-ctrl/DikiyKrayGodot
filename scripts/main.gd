@@ -493,7 +493,7 @@ func _create_ui() -> void:
     info_label.add_theme_font_size_override("font_size", 24)
     info_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     top.add_child(info_label)
-    # Центральная подсказка поверх мира. Не перехватывает касания джойстика.
+    # Прозрачная подсказка над нижней кнопкой взаимодействия.
     var hint_layer := CanvasLayer.new()
     hint_layer.layer = 25
     add_child(hint_layer)
@@ -502,11 +502,12 @@ func _create_ui() -> void:
     hint_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
     hint_layer.add_child(hint_root)
     hint_panel = PanelContainer.new()
-    hint_panel.set_anchors_preset(Control.PRESET_CENTER)
-    hint_panel.offset_left = -210.0
-    hint_panel.offset_right = 210.0
-    hint_panel.offset_top = -42.0
-    hint_panel.offset_bottom = 42.0
+    hint_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+    hint_panel.offset_left = -220.0
+    hint_panel.offset_right = 220.0
+    hint_panel.offset_top = -222.0
+    hint_panel.offset_bottom = -162.0
+    hint_panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
     hint_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
     hint_panel.modulate.a = 0.0
     hint_panel.visible = false
@@ -515,7 +516,10 @@ func _create_ui() -> void:
     hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     hint_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
     hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    hint_label.add_theme_font_size_override("font_size", 23)
+    hint_label.add_theme_font_size_override("font_size", 22)
+    hint_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+    hint_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+    hint_label.add_theme_constant_override("outline_size", 4)
     hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     hint_panel.add_child(hint_label)
     bag_button = Button.new()
@@ -767,8 +771,8 @@ func _show_center_hint(message: String) -> void:
     hint_panel.modulate.a = 0.0
     hint_tween = create_tween()
     hint_tween.tween_property(hint_panel, "modulate:a", 1.0, 0.35)
-    hint_tween.tween_interval(2.3)
-    hint_tween.tween_property(hint_panel, "modulate:a", 0.0, 0.45)
+    hint_tween.tween_interval(2.0)
+    hint_tween.tween_property(hint_panel, "modulate:a", 0.0, 0.65)
     hint_tween.tween_callback(func() -> void: hint_panel.visible = false)
 
 func _update_ui() -> void:
