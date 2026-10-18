@@ -93,7 +93,7 @@ var action_options: Array[String] = []
 var nearby_action_kind := ""
 var nearby_action_index := -1
 var nearby_action_position := Vector3.ZERO
-var status_message := "Подойдите к дереву или камню"
+var status_message := "Обновление: крупные валуны только с киркой"
 var rng := RandomNumberGenerator.new()
 
 # 24 минуты реального времени = одни игровые сутки.
@@ -372,7 +372,7 @@ func _create_resources() -> void:
     # Больше ресурсов, но без тяжёлых импортированных моделей.
     for i in range(112):
         var kind := "tree" if i < 72 else "rock"
-        var radius := 0.85 if kind == "tree" else (0.48 if i % 3 == 0 else 0.9)
+        var radius := 0.85 if kind == "tree" else (0.38 if i % 3 == 0 else 1.85)
         var pos := Vector2.ZERO
         var found := false
         for attempt in range(90):
@@ -406,8 +406,12 @@ func _create_resources() -> void:
         else:
             var small_rock := i % 3 == 0
             var rock_color := Color("929c9a") if not small_rock else Color("777f86")
-            var rock_size := rng.randf_range(0.32, 0.48) if small_rock else rng.randf_range(0.95, 1.4)
-            _mesh_sphere(node, rock_size, Vector3(0, rock_size * 0.55, 0), rock_color, Vector3(1.1, 0.65, 0.9))
+            var rock_size := rng.randf_range(0.22, 0.38) if small_rock else rng.randf_range(1.9, 2.6)
+            _mesh_sphere(node, rock_size, Vector3(0, rock_size * 0.55, 0), rock_color, Vector3(1.15, 0.8, 1.0))
+            if not small_rock:
+                # Дополнительные выступы делают крупный валун заметным и менее круглым.
+                _mesh_sphere(node, rock_size * 0.55, Vector3(rock_size * 0.6, rock_size * 0.35, -rock_size * 0.25), rock_color.darkened(0.12), Vector3(1.0, 0.65, 0.9))
+                _mesh_sphere(node, rock_size * 0.42, Vector3(-rock_size * 0.55, rock_size * 0.4, rock_size * 0.3), rock_color.lightened(0.08), Vector3(0.9, 0.8, 1.0))
         obstacles.append({"pos": pos, "radius": radius, "node": node})
         resources.append({"kind": kind, "pos": pos, "node": node, "duration": 2.4 if kind == "tree" else (1.3 if i % 3 == 0 else 5.0), "large": kind == "rock" and i % 3 != 0, "alive": true})
     for i in range(48):
@@ -1119,7 +1123,17 @@ func _stop_mining() -> void:
     progress_bar.visible = false
 
 func _finish_mining() -> void:
+    # Дополнительная проверка при завершении добычи: нельзя получить
+    # большой камень, если кирки нет, даже при ошибочном запуске таймера.
+    if target_resource < 0 or target_resource >= resources.size():
+        _stop_mining()
+        return
     var r: Dictionary = resources[target_resource]
+    if r["kind"] == "rock" and bool(r.get("large", false)) and not has_pickaxe:
+        _stop_mining()
+        status_message = "Нужна кирка: 3 древесины и 2 камня"
+        _update_ui()
+        return
     r["alive"] = false
     r["node"].queue_free()
     resources[target_resource] = r
