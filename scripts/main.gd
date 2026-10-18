@@ -73,6 +73,8 @@ var bag_panel: PanelContainer
 var bag_label: Label
 var zoom_label: Label
 var action_button: Button
+var nearby_button: Button
+var water_portions := 0
 var action_menu: PanelContainer
 var action_list: VBoxContainer
 var action_options: Array[String] = []
@@ -571,6 +573,30 @@ func _create_ui() -> void:
     action_button.focus_mode = Control.FOCUS_NONE
     action_button.pressed.connect(_open_action_menu)
     top.add_child(action_button)
+    nearby_button = Button.new()
+    nearby_button.text = "Действие рядом"
+    nearby_button.custom_minimum_size = Vector2(205, 54)
+    nearby_button.focus_mode = Control.FOCUS_NONE
+    nearby_button.visible = false
+    nearby_button.pressed.connect(_perform_nearby_action)
+    # Отдельный слой поверх HUD: кнопку не перекроют панели или фон.
+    var nearby_layer := CanvasLayer.new()
+    nearby_layer.layer = 15
+    add_child(nearby_layer)
+    var nearby_root := Control.new()
+    nearby_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    nearby_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    nearby_layer.add_child(nearby_root)
+    nearby_root.add_child(nearby_button)
+    nearby_button.anchor_left = 0.5
+    nearby_button.anchor_right = 0.5
+    nearby_button.anchor_top = 1.0
+    nearby_button.anchor_bottom = 1.0
+    nearby_button.offset_left = -130.0
+    nearby_button.offset_right = 130.0
+    nearby_button.offset_top = -180.0
+    nearby_button.offset_bottom = -122.0
+    nearby_button.mouse_filter = Control.MOUSE_FILTER_STOP
     action_menu = PanelContainer.new()
     root.add_child(action_menu)
     action_menu.set_anchors_preset(Control.PRESET_CENTER)
@@ -685,6 +711,7 @@ func _toggle_bag() -> void:
     if bag_panel.visible:
         action_menu.visible = false
         craft_panel.visible = false
+    _update_nearby_action()
     _update_ui()
 
 func _zoom(amount: float) -> void:
@@ -708,10 +735,17 @@ func _update_ui() -> void:
 
 func _survival_action(kind: String) -> void:
     var here := Vector2(player.position.x, player.position.z)
-    if kind == "water":
-        if here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 2.5:
+    if kind == "drink":
+        if water_portions > 0:
+            water_portions -= 1
             thirst = minf(100.0, thirst + 65.0)
-            status_message = "Фляга наполнена — ты попил воды"
+            status_message = "Ты попил воды из фляги"
+        else:
+            status_message = "Во фляге нет воды"
+    elif kind == "water":
+        if here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 2.5:
+            water_portions = mini(5, water_portions + 1)
+            status_message = "Набрана вода во флягу (%d/5)" % water_portions
         else:
             status_message = "Подойди к берегу озера"
     elif kind == "cook":
@@ -749,30 +783,14 @@ func _open_action_menu() -> void:
     for child in action_list.get_children():
         child.queue_free()
     action_options.clear()
-    var here := Vector2(player.global_position.x, player.global_position.z)
-    if here.distance_to(FIRE_POS) <= 4.0:
-        _add_action_option("Пожарить мясо", "cook")
-    if here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 2.5:
-        _add_action_option("Попить воды", "water")
-    var resource_index := _nearest_resource()
-    if resource_index >= 0:
-        var kind: String = resources[resource_index]["kind"]
-        var title := "Собрать ресурс"
-        if kind == "tree":
-            title = "Добыть дерево"
-        elif kind == "rock":
-            title = "Добыть камень"
-        elif kind == "berry":
-            title = "Собрать ягоды"
-        elif kind == "mushroom":
-            title = "Собрать грибы"
-        _add_action_option(title, "resource")
     if int(inventory.get("berry", 0)) > 0:
         _add_action_option("Съесть ягоды", "berry")
     if int(inventory.get("mushroom", 0)) > 0:
         _add_action_option("Съесть гриб", "mushroom")
     if int(inventory.get("cooked_meat", 0)) > 0:
         _add_action_option("Съесть жареное мясо", "cooked_meat")
+    if water_portions > 0:
+        _add_action_option("Попить воды (%d)" % water_portions, "drink")
     _add_action_option("Крафт", "craft")
     var close := Button.new()
     close.text = "Закрыть"
@@ -806,10 +824,47 @@ func _select_action(id: int) -> void:
     _update_nearby_action()
 
 func _update_nearby_action() -> void:
-    # Кнопка «Действие» всегда рядом с «Рюкзаком».
-    # Доступные действия обновляются при открытии меню.
-    if action_button != null:
-        action_button.visible = true
+    if nearby_button == null or player == null:
+        return
+    nearby_action_kind = ""
+    nearby_button.visible = false
+    if bag_panel.visible or action_menu.visible or craft_panel.visible or sleep_panel.visible or sleep_in_progress:
+        return
+    var here := Vector2(player.global_position.x, player.global_position.z)
+    if here.distance_to(FIRE_POS) <= 4.0:
+        nearby_action_kind = "cook"
+        nearby_button.text = "Пожарить мясо у костра"
+    elif here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 2.5:
+        nearby_action_kind = "water"
+        nearby_button.text = "Набрать воды"
+    else:
+        var index := _nearest_resource()
+        if index >= 0:
+            nearby_action_kind = "resource"
+            var kind: String = resources[index]["kind"]
+            if kind == "tree":
+                nearby_button.text = "Добыть дерево"
+            elif kind == "rock":
+                nearby_button.text = "Добыть камень"
+            elif kind == "berry":
+                nearby_button.text = "Собрать ягоды"
+            elif kind == "mushroom":
+                nearby_button.text = "Собрать грибы"
+            else:
+                nearby_button.text = "Собрать ресурс"
+    nearby_button.visible = nearby_action_kind != ""
+
+func _perform_nearby_action() -> void:
+    # Повторно проверяем дистанцию в момент нажатия.
+    _update_nearby_action()
+    if nearby_action_kind == "cook":
+        _survival_action("cook")
+    elif nearby_action_kind == "water":
+        _survival_action("water")
+    elif nearby_action_kind == "resource":
+        var index := _nearest_resource()
+        if index >= 0:
+            _begin_mining(index)
 
 func _nearest_resource() -> int:
     var closest := -1
@@ -1116,6 +1171,8 @@ func _input(event: InputEvent) -> void:
             var viewport_height := get_viewport().get_visible_rect().size.y
             # Не захватываем касания по контекстной кнопке действий.
             if action_button != null and action_button.visible and Rect2(action_button.global_position, action_button.size).has_point(event.position):
+                return
+            if nearby_button != null and nearby_button.visible and Rect2(nearby_button.global_position, nearby_button.size).has_point(event.position):
                 return
             # Верхняя центральная область отдана кнопкам + и −.
             if event.position.y < 70.0 and absf(event.position.x - viewport_width * 0.5) < 80.0:
