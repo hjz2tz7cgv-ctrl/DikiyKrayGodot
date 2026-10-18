@@ -42,6 +42,11 @@ var survival_label: Label
 var survival_buttons: Array[Button] = []
 var has_spear := false
 var has_pickaxe := false
+# Панель быстрого доступа: инструменты остаются собственностью игрока,
+# но выбираются здесь, без открытия рюкзака.
+var equipped_tool := "hand"
+var quickbar: HBoxContainer
+var quickbar_buttons: Dictionary = {}
 var pickaxe_recipe_button: Button
 var hunt_target := -1
 var attack_cooldown := 0.0
@@ -93,7 +98,7 @@ var action_options: Array[String] = []
 var nearby_action_kind := ""
 var nearby_action_index := -1
 var nearby_action_position := Vector3.ZERO
-var status_message := "Обновление: крупные валуны только с киркой"
+var status_message := "Подойдите к дереву или камню"
 var rng := RandomNumberGenerator.new()
 
 # 24 минуты реального времени = одни игровые сутки.
@@ -372,7 +377,7 @@ func _create_resources() -> void:
     # Больше ресурсов, но без тяжёлых импортированных моделей.
     for i in range(112):
         var kind := "tree" if i < 72 else "rock"
-        var radius := 0.85 if kind == "tree" else (0.38 if i % 3 == 0 else 1.85)
+        var radius := 0.85 if kind == "tree" else (0.48 if i % 3 == 0 else 0.9)
         var pos := Vector2.ZERO
         var found := false
         for attempt in range(90):
@@ -406,12 +411,8 @@ func _create_resources() -> void:
         else:
             var small_rock := i % 3 == 0
             var rock_color := Color("929c9a") if not small_rock else Color("777f86")
-            var rock_size := rng.randf_range(0.22, 0.38) if small_rock else rng.randf_range(1.9, 2.6)
-            _mesh_sphere(node, rock_size, Vector3(0, rock_size * 0.55, 0), rock_color, Vector3(1.15, 0.8, 1.0))
-            if not small_rock:
-                # Дополнительные выступы делают крупный валун заметным и менее круглым.
-                _mesh_sphere(node, rock_size * 0.55, Vector3(rock_size * 0.6, rock_size * 0.35, -rock_size * 0.25), rock_color.darkened(0.12), Vector3(1.0, 0.65, 0.9))
-                _mesh_sphere(node, rock_size * 0.42, Vector3(-rock_size * 0.55, rock_size * 0.4, rock_size * 0.3), rock_color.lightened(0.08), Vector3(0.9, 0.8, 1.0))
+            var rock_size := rng.randf_range(0.32, 0.48) if small_rock else rng.randf_range(0.95, 1.4)
+            _mesh_sphere(node, rock_size, Vector3(0, rock_size * 0.55, 0), rock_color, Vector3(1.1, 0.65, 0.9))
         obstacles.append({"pos": pos, "radius": radius, "node": node})
         resources.append({"kind": kind, "pos": pos, "node": node, "duration": 2.4 if kind == "tree" else (1.3 if i % 3 == 0 else 5.0), "large": kind == "rock" and i % 3 != 0, "alive": true})
     for i in range(48):
@@ -647,6 +648,25 @@ func _create_ui() -> void:
     nearby_button.offset_bottom = -110.0
     nearby_button.mouse_filter = Control.MOUSE_FILTER_STOP
     nearby_button.pressed.connect(_perform_nearby_action)
+    # Нижняя панель снаряжения под кнопкой взаимодействия.
+    quickbar = HBoxContainer.new()
+    quickbar.alignment = BoxContainer.ALIGNMENT_CENTER
+    quickbar.add_theme_constant_override("separation", 5)
+    root.add_child(quickbar)
+    quickbar.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+    quickbar.offset_left = -158.0
+    quickbar.offset_right = 158.0
+    quickbar.offset_top = -99.0
+    quickbar.offset_bottom = -48.0
+    for tool_id in ["hand", "spear", "pickaxe", "sword", "bow"]:
+        var tool_button := Button.new()
+        tool_button.custom_minimum_size = Vector2(58, 48)
+        tool_button.focus_mode = Control.FOCUS_NONE
+        tool_button.mouse_filter = Control.MOUSE_FILTER_STOP
+        tool_button.pressed.connect(_select_quick_tool.bind(tool_id))
+        quickbar.add_child(tool_button)
+        quickbar_buttons[tool_id] = tool_button
+    _refresh_quickbar()
     action_menu = PanelContainer.new()
     root.add_child(action_menu)
     action_menu.set_anchors_preset(Control.PRESET_CENTER)
@@ -732,6 +752,33 @@ func _toggle_craft() -> void:
         sleep_panel.visible = false
     _update_ui()
 
+func _tool_owned(tool_id: String) -> bool:
+    if tool_id == "hand":
+        return true
+    if tool_id == "spear":
+        return has_spear
+    if tool_id == "pickaxe":
+        return has_pickaxe
+    return false # Меч и лук добавим вместе с их крафтом и механиками.
+
+func _select_quick_tool(tool_id: String) -> void:
+    if not _tool_owned(tool_id):
+        status_message = "Сначала изготовь инструмент" if tool_id == "spear" or tool_id == "pickaxe" else "Этот инструмент появится позже"
+        _update_ui()
+        return
+    equipped_tool = tool_id
+    status_message = "Выбрано: " + {"hand":"Рука", "spear":"Копьё", "pickaxe":"Кирка"}.get(tool_id, tool_id)
+    _update_ui()
+
+func _refresh_quickbar() -> void:
+    var labels := {"hand":"Рука", "spear":"Копьё", "pickaxe":"Кирка", "sword":"Меч", "bow":"Лук"}
+    for tool_id in quickbar_buttons.keys():
+        var button: Button = quickbar_buttons[tool_id]
+        var owned := _tool_owned(tool_id)
+        button.text = ("● " if equipped_tool == tool_id else "") + str(labels[tool_id]) if owned else "🔒 " + str(labels[tool_id])
+        button.disabled = not owned
+        button.modulate = Color(1.0, 0.94, 0.67) if equipped_tool == tool_id else Color(1, 1, 1)
+
 func _craft_spear() -> void:
     if has_spear:
         status_message = "Копьё уже изготовлено"
@@ -739,6 +786,7 @@ func _craft_spear() -> void:
         inventory["wood"] -= 3
         inventory["stone"] -= 1
         has_spear = true
+        equipped_tool = "spear"
         status_message = "Деревянное копьё готово! Нажми на животное"
     else:
         status_message = "Для копья нужны 3 дерева и 1 камень"
@@ -751,6 +799,7 @@ func _craft_pickaxe() -> void:
         inventory["wood"] -= 3
         inventory["stone"] -= 2
         has_pickaxe = true
+        equipped_tool = "pickaxe"
         status_message = "Кирка готова! Теперь можно добывать крупные камни"
     else:
         status_message = "Для кирки нужны 3 дерева и 2 камня"
@@ -812,6 +861,8 @@ func _update_ui() -> void:
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
     zoom_label.text = "Слева — ходьба  •  Справа — камера  •  Масштаб: + / −"
     bag_label.text = "РЮКЗАК\nДерево: %d    Камень: %d\nЯгоды: %d    Грибы: %d\nМясо: %d    Жареное: %d\nШкуры: %d    Копьё: %s\nКирка: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["mushroom"], inventory["meat"], inventory["cooked_meat"], inventory["hide"], "есть" if has_spear else "нет", "есть" if has_pickaxe else "нет"]
+    if quickbar != null:
+        _refresh_quickbar()
     if craft_recipe_button != null:
         craft_recipe_button.text = "Копьё уже создано" if has_spear else "Создать копьё (3 дерева + 1 камень)"
         craft_recipe_button.disabled = has_spear or inventory["wood"] < 3 or inventory["stone"] < 1
@@ -1084,8 +1135,8 @@ func _tap_world(screen: Vector2) -> void:
                 pending_kind = "animal"
                 pending_index = i
     if pending_kind == "animal":
-        if not has_spear:
-            status_message = "Для охоты сначала изготовь копьё"
+        if not has_spear or equipped_tool != "spear":
+            status_message = "Выбери копьё в нижней панели для охоты"
         else:
             hunt_target = pending_index
             status_message = "Охота! Персонаж преследует животное"
@@ -1107,8 +1158,8 @@ func _tap_world(screen: Vector2) -> void:
 func _begin_mining(index: int) -> void:
     if index < 0 or index >= resources.size() or not bool(resources[index]["alive"]):
         return
-    if resources[index]["kind"] == "rock" and bool(resources[index].get("large", false)) and not has_pickaxe:
-        status_message = "Для большого камня нужна кирка (крафт: 3 дерева + 2 камня)"
+    if resources[index]["kind"] == "rock" and bool(resources[index].get("large", false)) and (not has_pickaxe or equipped_tool != "pickaxe"):
+        status_message = "Для большого камня выбери кирку в нижней панели (крафт: 3 дерева + 2 камня)"
         _update_ui()
         return
     target_resource = index
@@ -1123,17 +1174,7 @@ func _stop_mining() -> void:
     progress_bar.visible = false
 
 func _finish_mining() -> void:
-    # Дополнительная проверка при завершении добычи: нельзя получить
-    # большой камень, если кирки нет, даже при ошибочном запуске таймера.
-    if target_resource < 0 or target_resource >= resources.size():
-        _stop_mining()
-        return
     var r: Dictionary = resources[target_resource]
-    if r["kind"] == "rock" and bool(r.get("large", false)) and not has_pickaxe:
-        _stop_mining()
-        status_message = "Нужна кирка: 3 древесины и 2 камня"
-        _update_ui()
-        return
     r["alive"] = false
     r["node"].queue_free()
     resources[target_resource] = r
@@ -1360,6 +1401,8 @@ func _input(event: InputEvent) -> void:
                 nearby_touch_ids[event.index] = true
                 get_viewport().set_input_as_handled()
                 return
+            if quickbar != null and quickbar.get_global_rect().has_point(event.position):
+                return
             active_touches[event.index] = event.position
             var viewport_width := get_viewport().get_visible_rect().size.x
             var viewport_height := get_viewport().get_visible_rect().size.y
@@ -1380,6 +1423,9 @@ func _input(event: InputEvent) -> void:
                 camera_touch_last = event.position
                 gather_direction = Vector2.ZERO
         else:
+            if quickbar != null and quickbar.get_global_rect().has_point(event.position):
+                active_touches.erase(event.index)
+                return
             active_touches.erase(event.index)
             if nearby_touch_ids.has(event.index):
                 nearby_touch_ids.erase(event.index)
@@ -1423,6 +1469,8 @@ func _unhandled_input(event: InputEvent) -> void:
         elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
             _zoom(1.0)
         elif event.button_index == MOUSE_BUTTON_LEFT:
+            if quickbar != null and quickbar.get_global_rect().has_point(event.position):
+                return
             if nearby_button != null and nearby_button.visible and nearby_button.get_global_rect().has_point(event.position):
                 return
             _tap_world(event.position)
