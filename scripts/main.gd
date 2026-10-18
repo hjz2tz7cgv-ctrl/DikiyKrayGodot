@@ -1059,8 +1059,11 @@ func _sit_on_bench() -> void:
     player.position.x = BENCH_POS.x
     player.position.z = BENCH_POS.y - 0.15
     player_visual.position.y = -0.35
-    # Сидя на лавочке, персонаж смотрит на костёр.
-    player_facing = PI
+    # В Godot модель смотрит вдоль -Z при rotation.y == 0.
+    # Поворачиваем её точно к костру, а не спиной к нему.
+    var to_fire := FIRE_POS - Vector2(player.position.x, player.position.z)
+    player_facing = atan2(-to_fire.x, -to_fire.y)
+    player_visual.rotation.y = player_facing
 
 func _finish_cooking() -> void:
     cooking_active = false
@@ -1140,8 +1143,11 @@ func _open_action_menu() -> void:
         _add_action_option("Попить воды (%d)" % water_portions, "drink")
     if Vector2(player.position.x, player.position.z).distance_to(FIRE_POS) <= 3.5:
         _add_action_option("Пожарить мясо и сесть", "cook")
-    if Vector2(player.position.x, player.position.z).distance_to(BENCH_POS) <= 3.0 and not sitting:
-        _add_action_option("Сесть и отдохнуть у костра", "rest")
+    if Vector2(player.position.x, player.position.z).distance_to(BENCH_POS) <= 3.0:
+        if sitting:
+            _add_action_option("Встать со скамейки", "stand")
+        else:
+            _add_action_option("Сесть и отдохнуть у костра", "rest")
     _add_action_option("Крафт", "craft")
     var close := Button.new()
     close.text = "Закрыть"
