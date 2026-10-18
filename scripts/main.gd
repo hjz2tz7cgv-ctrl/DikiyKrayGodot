@@ -580,7 +580,8 @@ func _create_ui() -> void:
     nearby_button.custom_minimum_size = Vector2(0, 0)
     nearby_button.focus_mode = Control.FOCUS_NONE
     nearby_button.visible = false
-    nearby_button.pressed.connect(_perform_nearby_action)
+    # Контекстная кнопка обрабатывается напрямую в _input: мобильный Web не всегда
+    # посылает Button.pressed при одновременной работе виртуального джойстика.
     # Используем тот же HUD, что и работающие кнопки «Рюкзак» и «Действие».
     # Якоря задаются относительно реального размера экрана.
     root.add_child(nearby_button)
@@ -589,7 +590,7 @@ func _create_ui() -> void:
     nearby_button.offset_right = 112.0
     nearby_button.offset_top = -150.0
     nearby_button.offset_bottom = -110.0
-    nearby_button.mouse_filter = Control.MOUSE_FILTER_STOP
+    nearby_button.mouse_filter = Control.MOUSE_FILTER_IGNORE
     action_menu = PanelContainer.new()
     root.add_child(action_menu)
     action_menu.set_anchors_preset(Control.PRESET_CENTER)
@@ -1207,6 +1208,7 @@ func _input(event: InputEvent) -> void:
                 return
             if nearby_button != null and nearby_button.visible and nearby_button.get_global_rect().has_point(event.position):
                 nearby_touch_ids[event.index] = true
+                _perform_nearby_action()
                 return
             # Верхняя центральная область отдана кнопкам + и −.
             if event.position.y < 70.0 and absf(event.position.x - viewport_width * 0.5) < 80.0:
