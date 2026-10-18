@@ -736,13 +736,13 @@ func _survival_action(kind: String) -> void:
         else:
             status_message = "Во фляге нет воды"
     elif kind == "water":
-        if here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 4.5:
+        if here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 1.3:
             water_portions = mini(5, water_portions + 1)
             status_message = "Набрана вода во флягу (%d/5)" % water_portions
         else:
             status_message = "Подойди к берегу озера"
     elif kind == "cook":
-        if here.distance_to(FIRE_POS) > 5.5:
+        if here.distance_to(FIRE_POS) > 3.2:
             status_message = "Готовить мясо можно только у костра"
         elif inventory["meat"] < 1 or inventory["wood"] < 1:
             status_message = "Для жарки нужны 1 мясо и 1 дерево"
@@ -827,18 +827,18 @@ func _update_nearby_action() -> void:
     var here := Vector2(player.global_position.x, player.global_position.z)
     # Палатка — отдельное действие при приближении, как костёр и озеро.
     # Проверяем её первой, чтобы другие ресурсы не скрывали кнопку отдыха.
-    if here.distance_to(TENT_POS) <= 4.0:
+    if here.distance_to(TENT_POS) <= 2.8:
         nearby_action_kind = "tent"
         nearby_button.text = "Отдохнуть в палатке"
-    elif here.distance_to(FIRE_POS) <= 5.5:
+    elif here.distance_to(FIRE_POS) <= 3.2:
         nearby_action_kind = "cook"
         nearby_button.text = "Пожарить мясо у костра"
-    elif here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 4.5:
+    elif here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 1.3:
         nearby_action_kind = "water"
         nearby_button.text = "Набрать воды"
     else:
         var closest_drop := -1
-        var drop_distance := 3.2
+        var drop_distance := 2.0
         for i in range(drops.size()):
             var d: float = here.distance_to(drops[i]["pos"])
             if d < drop_distance:
@@ -872,7 +872,7 @@ func _perform_nearby_action() -> void:
     var selected: int = nearby_action_index
     if chosen == "tent":
         var here := Vector2(player.global_position.x, player.global_position.z)
-        if here.distance_to(TENT_POS) <= 4.0:
+        if here.distance_to(TENT_POS) <= 2.8:
             _show_sleep_panel()
         else:
             status_message = "Подойди ближе к палатке"
@@ -884,7 +884,7 @@ func _perform_nearby_action() -> void:
         if selected >= 0 and selected < drops.size():
             var pos: Vector2 = drops[selected]["pos"]
             var here := Vector2(player.position.x, player.position.z)
-            if here.distance_to(pos) <= 4.0:
+            if here.distance_to(pos) <= 2.1:
                 _pickup_index(selected)
             else:
                 status_message = "Подойди ближе к предмету"
@@ -892,7 +892,7 @@ func _perform_nearby_action() -> void:
         if selected >= 0 and selected < resources.size() and bool(resources[selected]["alive"]):
             var pos: Vector2 = resources[selected]["pos"]
             var here := Vector2(player.position.x, player.position.z)
-            if here.distance_to(pos) <= 4.6:
+            if here.distance_to(pos) <= 2.9:
                 pending_index = -1
                 pending_kind = ""
                 _begin_mining(selected)
@@ -903,7 +903,7 @@ func _perform_nearby_action() -> void:
 
 func _nearest_resource() -> int:
     var closest := -1
-    var best := 4.5
+    var best := 2.8
     var p := Vector2(player.position.x, player.position.z)
     for i in range(resources.size()):
         if not resources[i]["alive"]:
@@ -1156,7 +1156,7 @@ func _physics_process(delta: float) -> void:
         if nearest >= 0:
             _begin_mining(nearest)
     if mining_active:
-        if target_resource < 0 or not resources[target_resource]["alive"] or Vector2(player.position.x, player.position.z).distance_to(resources[target_resource]["pos"]) > 4.6:
+        if target_resource < 0 or not resources[target_resource]["alive"] or Vector2(player.position.x, player.position.z).distance_to(resources[target_resource]["pos"]) > 3.0:
             _stop_mining()
             status_message = "Слишком далеко — добыча прервана"
             _update_ui()
