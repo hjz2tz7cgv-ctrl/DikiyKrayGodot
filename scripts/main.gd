@@ -575,7 +575,7 @@ func _create_ui() -> void:
     top.add_child(action_button)
     nearby_button = Button.new()
     nearby_button.text = "Действие рядом"
-    nearby_button.custom_minimum_size = Vector2(205, 54)
+    nearby_button.custom_minimum_size = Vector2(0, 0)
     nearby_button.focus_mode = Control.FOCUS_NONE
     nearby_button.visible = false
     nearby_button.pressed.connect(_perform_nearby_action)
@@ -583,10 +583,10 @@ func _create_ui() -> void:
     # Якоря задаются относительно реального размера экрана.
     root.add_child(nearby_button)
     nearby_button.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-    nearby_button.offset_left = -150.0
-    nearby_button.offset_right = 150.0
-    nearby_button.offset_top = -145.0
-    nearby_button.offset_bottom = -85.0
+    nearby_button.offset_left = -112.0
+    nearby_button.offset_right = 112.0
+    nearby_button.offset_top = -118.0
+    nearby_button.offset_bottom = -78.0
     nearby_button.mouse_filter = Control.MOUSE_FILTER_STOP
     action_menu = PanelContainer.new()
     root.add_child(action_menu)
@@ -874,7 +874,11 @@ func _perform_nearby_action() -> void:
             _pickup_index(closest)
     elif nearby_action_kind == "resource":
         var index := _nearest_resource()
-        if index >= 0:
+        if index >= 0 and bool(resources[index]["alive"]):
+            # Та же добыча, что при нажатии непосредственно на гриб,
+            # дерево или камень: запускаем процесс с заполнением шкалы.
+            pending_index = -1
+            pending_kind = ""
             _begin_mining(index)
     _update_nearby_action()
 
