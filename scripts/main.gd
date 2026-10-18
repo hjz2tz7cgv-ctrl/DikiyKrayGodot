@@ -47,7 +47,7 @@ var iron_recipe_button: Button
 var minimap: Control
 var minimap_dots: Array[Control] = []
 var stream_points: Array[Vector2] = []
-var crossing_z_positions: Array[float] = [-37.0, -7.0, 23.0, 43.0]
+var crossing_z_positions: Array[float] = [-37.0, -7.0, 5.0, 23.0, 43.0]
 # Панель быстрого доступа: инструменты остаются собственностью игрока,
 # но выбираются здесь, без открытия рюкзака.
 var equipped_tool := "hand"
@@ -1189,8 +1189,8 @@ func _update_nearby_action() -> void:
         nearby_action_kind = "tent"
         nearby_button.text = "Отдохнуть в палатке"
     elif here.distance_to(BENCH_POS) <= 2.8 and not cooking_active:
-        nearby_action_kind = "rest"
-        nearby_button.text = "Сесть на скамейку и отдохнуть"
+        nearby_action_kind = "stand" if sitting else "rest"
+        nearby_button.text = "Встать со скамейки" if sitting else "Сесть на скамейку и отдохнуть"
     elif here.distance_to(FIRE_POS) <= 3.2:
         nearby_action_kind = "cook"
         nearby_button.text = "Мясо жарится…" if cooking_active else "Пожарить мясо и сесть"
@@ -1241,6 +1241,10 @@ func _perform_nearby_action() -> void:
             status_message = "Подойди ближе к палатке"
     elif chosen == "rest":
         _survival_action("rest")
+    elif chosen == "stand":
+        sitting = false
+        player_visual.position.y = 0.0
+        status_message = "Ты встал со скамейки"
     elif chosen == "cook":
         _survival_action("cook")
     elif chosen == "water":
