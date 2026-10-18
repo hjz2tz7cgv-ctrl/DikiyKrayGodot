@@ -21,6 +21,9 @@ var player_facing := 0.0
 const FIRE_POS := Vector2(-3.0, 4.0)
 const BENCH_POS := Vector2(-3.0, 7.1)
 const CABIN_POS := Vector2(-9.0, 31.0)
+const LOGGER_POS := Vector2(42.0, 28.0)
+var logger_searched := false
+var poison_time := 0.0
 var cabin_searched := false
 var cabin_note_found := false
 var campfire_node: Node3D
@@ -38,7 +41,7 @@ var resources: Array[Dictionary] = []
 var drops: Array[Dictionary] = []
 var animals: Array[Dictionary] = []
 var scenery: Array[Node3D] = []
-var inventory := {"wood": 0, "stone": 0, "berry": 0, "meat": 0, "hide": 0, "mushroom": 0, "cooked_meat": 0, "iron": 0, "silver": 0, "gold": 0}
+var inventory := {"wood": 0, "stone": 0, "berry": 0, "meat": 0, "hide": 0, "mushroom": 0, "cooked_meat": 0, "iron": 0, "silver": 0, "gold": 0, "herb": 0, "poison_mushroom": 0, "bandage": 0, "herbal_tea": 0}
 var hunger := 100.0
 var thirst := 100.0
 var survival_label: Label
@@ -47,6 +50,8 @@ var has_spear := false
 var has_pickaxe := false
 var has_iron_tool := false
 var iron_recipe_button: Button
+var bandage_recipe_button: Button
+var tea_recipe_button: Button
 var minimap: Control
 var minimap_dots: Array[Control] = []
 var stream_points: Array[Vector2] = []
@@ -137,6 +142,7 @@ func _ready() -> void:
     _create_scenery()
     _create_forest_paths()
     _create_abandoned_cabin()
+    _create_logger_camp()
     _create_animals()
     _create_ui()
     _update_lighting()
@@ -463,7 +469,7 @@ func _is_lake(pos: Vector2, margin := 0.0) -> bool:
     return pos.distance_to(LAKE_CENTER) < LAKE_RADIUS + margin
 
 func _can_place(pos: Vector2, radius: float) -> bool:
-    if _is_lake(pos, radius + 0.3) or _is_stream(pos, radius + 0.3) or pos.distance_to(CABIN_POS) < radius + 7.0:
+    if _is_lake(pos, radius + 0.3) or _is_stream(pos, radius + 0.3) or pos.distance_to(CABIN_POS) < radius + 7.0 or pos.distance_to(LOGGER_POS) < radius + 9.0:
         return false
     if pos.length() < 3.3 or pos.distance_to(TENT_POS) < radius + 3.5 or pos.distance_to(FIRE_POS) < radius + 3.2 or pos.distance_to(BENCH_POS) < radius + 2.4:
         return false
@@ -540,6 +546,25 @@ func _create_resources() -> void:
         _mesh_box(mushroom, Vector3(0.13, 0.32, 0.13), Vector3(0, 0.16, 0), Color("e8d9b4"))
         _mesh_sphere(mushroom, 0.27, Vector3(0, 0.37, 0), Color("b76b3e"), Vector3(1.0, 0.48, 1.0))
         resources.append({"kind": "mushroom", "pos": pos, "node": mushroom, "duration": 1.2, "alive": true})
+
+    # Лечебные травы и опасные красные грибы.
+    for i in range(54):
+        var pos := _random_land_pos()
+        if not _can_place(pos, 0.45):
+            continue
+        var node := Node3D.new()
+        node.position = Vector3(pos.x, 0, pos.y)
+        add_child(node)
+        var kind := "herb" if i < 35 else "poison_mushroom"
+        if kind == "herb":
+            for j in range(3):
+                _mesh_box(node, Vector3(0.06, 0.52, 0.06), Vector3(float(j - 1) * 0.16, 0.26, 0), Color("448e44"))
+                _mesh_sphere(node, 0.16, Vector3(float(j - 1) * 0.16, 0.52, 0), Color("72b75d"))
+        else:
+            _mesh_box(node, Vector3(0.13, 0.33, 0.13), Vector3(0, 0.16, 0), Color("e7d9b8"))
+            _mesh_sphere(node, 0.29, Vector3(0, 0.38, 0), Color("dc3d36"), Vector3(1.0, 0.5, 1.0))
+        resources.append({"kind": kind, "pos": pos, "node": node, "duration": 1.3, "alive": true})
+
 
 func _create_scenery() -> void:
     # Небольшие декоративные поляны и цветы, не блокирующие движение.
@@ -623,6 +648,25 @@ func _create_abandoned_cabin() -> void:
         var offset: Vector2 = wall_data[0]
         var radius: float = wall_data[1]
         obstacles.append({"pos": CABIN_POS + offset, "radius": radius, "node": cabin})
+
+func _create_logger_camp() -> void:
+    # Лагерь лесорубов: только на суше, без пересечения воды.
+    if _is_lake(LOGGER_POS, 9.0) or _is_stream(LOGGER_POS, 9.0):
+        push_warning("Стоянка лесорубов слишком близко к воде")
+        return
+    var camp := Node3D.new()
+    camp.name = "LoggerCamp"
+    camp.position = Vector3(LOGGER_POS.x, 0, LOGGER_POS.y)
+    add_child(camp)
+    # Деревянный навес, опоры и ящики с припасами.
+    for x in [-2.4, 2.4]:
+        for z in [-1.8, 1.8]:
+            _mesh_box(camp, Vector3(0.32, 2.5, 0.32), Vector3(x, 1.25, z), Color("745337"))
+    _mesh_box(camp, Vector3(5.6, 0.22, 4.5), Vector3(0, 2.55, 0), Color("67533d"))
+    _mesh_box(camp, Vector3(1.2, 0.9, 1.1), Vector3(-1.2, 0.45, 0.0), Color("94714c"))
+    _mesh_box(camp, Vector3(1.0, 0.75, 0.95), Vector3(1.25, 0.38, 0.65), Color("886441"))
+    _mesh_box(camp, Vector3(0.7, 0.08, 0.55), Vector3(1.25, 0.82, 0.65), Color("b7a17a"))
+
 
 func _create_animals() -> void:
     # Зайцы, олени и кабаны мирно бродят по миру.
@@ -859,8 +903,8 @@ func _create_ui() -> void:
     craft_panel.set_anchors_preset(Control.PRESET_CENTER)
     craft_panel.offset_left = -160
     craft_panel.offset_right = 160
-    craft_panel.offset_top = -190
-    craft_panel.offset_bottom = 190
+    craft_panel.offset_top = -230
+    craft_panel.offset_bottom = 230
     craft_panel.visible = false
     var craft_col := VBoxContainer.new()
     craft_panel.add_child(craft_col)
@@ -870,7 +914,7 @@ func _create_ui() -> void:
     craft_title.add_theme_font_size_override("font_size", 25)
     craft_col.add_child(craft_title)
     var craft_description := Label.new()
-    craft_description.text = "Копьё, кирка и железный инструмент"
+    craft_description.text = "Инструменты и лечебные предметы"
     craft_description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     craft_col.add_child(craft_description)
     craft_recipe_button = Button.new()
@@ -885,6 +929,14 @@ func _create_ui() -> void:
     iron_recipe_button.custom_minimum_size.y = 55
     iron_recipe_button.pressed.connect(_craft_iron_tool)
     craft_col.add_child(iron_recipe_button)
+    bandage_recipe_button = Button.new()
+    bandage_recipe_button.custom_minimum_size.y = 48
+    bandage_recipe_button.pressed.connect(_craft_bandage)
+    craft_col.add_child(bandage_recipe_button)
+    tea_recipe_button = Button.new()
+    tea_recipe_button.custom_minimum_size.y = 48
+    tea_recipe_button.pressed.connect(_craft_tea)
+    craft_col.add_child(tea_recipe_button)
     var craft_close := Button.new()
     craft_close.text = "Закрыть"
     craft_close.custom_minimum_size.y = 48
@@ -963,6 +1015,26 @@ func _update_minimap() -> void:
     for i in range(4):
         var point: Vector2 = positions[i]
         minimap_dots[i].position = Vector2(69, 69) + point * 0.91 - minimap_dots[i].size * 0.5
+
+func _craft_bandage() -> void:
+    if inventory["herb"] >= 2 and inventory["hide"] >= 1:
+        inventory["herb"] -= 2
+        inventory["hide"] -= 1
+        inventory["bandage"] += 1
+        status_message = "Повязка готова! Используй через Действия"
+    else:
+        status_message = "Нужны 2 травы и 1 шкура"
+    _update_ui()
+
+func _craft_tea() -> void:
+    if inventory["herb"] >= 2 and water_portions >= 1:
+        inventory["herb"] -= 2
+        water_portions -= 1
+        inventory["herbal_tea"] += 1
+        status_message = "Травяной отвар готов! Используй через Действия"
+    else:
+        status_message = "Нужны 2 травы и 1 вода"
+    _update_ui()
 
 func _craft_iron_tool() -> void:
     if has_iron_tool:
@@ -1113,6 +1185,7 @@ func _update_ui() -> void:
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
     bag_label.text = "РЮКЗАК\nДерево: %d    Камень: %d\nЯгоды: %d    Грибы: %d\nМясо: %d    Жареное: %d\nШкуры: %d    Копьё: %s\nКирка: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["mushroom"], inventory["meat"], inventory["cooked_meat"], inventory["hide"], "есть" if has_spear else "нет", "есть" if has_pickaxe else "нет"]
     bag_label.text += "\nЖелезо: %d  Серебро: %d  Золото: %d\nЖелезный инструмент: %s" % [inventory["iron"], inventory["silver"], inventory["gold"], "есть" if has_iron_tool else "нет"]
+    bag_label.text += "\\nТравы: %d  Красные грибы: %d\\nПовязки: %d  Отвары: %d" % [inventory["herb"], inventory["poison_mushroom"], inventory["bandage"], inventory["herbal_tea"]]
     if cabin_note_found:
         bag_label.text += "\nЗаписка из хижины: «03:17. Кто-то стоял у палатки...»"
     if quickbar != null:
@@ -1124,6 +1197,12 @@ func _update_ui() -> void:
     if iron_recipe_button != null:
         iron_recipe_button.text = "Железный инструмент готов" if has_iron_tool else "Железный инструмент (2 железа + 2 дерева)"
         iron_recipe_button.disabled = has_iron_tool or inventory["iron"] < 2 or inventory["wood"] < 2
+    if bandage_recipe_button != null:
+        bandage_recipe_button.text = "Повязка (2 травы + 1 шкура)"
+        bandage_recipe_button.disabled = inventory["herb"] < 2 or inventory["hide"] < 1
+    if tea_recipe_button != null:
+        tea_recipe_button.text = "Травяной отвар (2 травы + 1 вода)"
+        tea_recipe_button.disabled = inventory["herb"] < 2 or water_portions < 1
     if pickaxe_recipe_button != null:
         pickaxe_recipe_button.text = "Кирка уже создана" if has_pickaxe else "Создать кирку (3 дерева + 2 камня)"
         pickaxe_recipe_button.disabled = has_pickaxe or inventory["wood"] < 3 or inventory["stone"] < 2
@@ -1175,6 +1254,30 @@ func _survival_action(kind: String) -> void:
             inventory["wood"] += 3
             inventory["stone"] += 2
             status_message = "Тайник: +3 дерева, +2 камня. Записка: «03:17. Кто-то стоял у палатки...»"
+    elif kind == "logger":
+        if here.distance_to(LOGGER_POS) > 5.0:
+            status_message = "Подойди к стоянке лесорубов"
+        elif logger_searched:
+            status_message = "Ящики уже осмотрены"
+        else:
+            logger_searched = true
+            inventory["wood"] += 4
+            inventory["herb"] += 2
+            status_message = "Стоянка: +4 древесины и +2 лечебные травы"
+    elif kind == "bandage" or kind == "herbal_tea":
+        if int(inventory[kind]) < 1:
+            status_message = "Сначала изготовь лечебный предмет"
+        else:
+            inventory[kind] -= 1
+            poison_time = 0.0
+            if kind == "herbal_tea":
+                thirst = minf(100.0, thirst + 25.0)
+            status_message = "Отравление снято"
+    elif kind == "poison_mushroom":
+        if int(inventory["poison_mushroom"]) > 0:
+            inventory["poison_mushroom"] -= 1
+            poison_time = 75.0
+            status_message = "Ядовитый гриб! Началось отравление"
     elif kind == "rest":
         if here.distance_to(BENCH_POS) <= 3.0 and not cooking_active:
             _sit_on_bench()
@@ -1227,8 +1330,16 @@ func _open_action_menu() -> void:
         _add_action_option("Съесть гриб", "mushroom")
     if int(inventory.get("cooked_meat", 0)) > 0:
         _add_action_option("Съесть жареное мясо", "cooked_meat")
+    if int(inventory["bandage"]) > 0:
+        _add_action_option("Использовать повязку", "bandage")
+    if int(inventory["herbal_tea"]) > 0:
+        _add_action_option("Выпить травяной отвар", "herbal_tea")
+    if int(inventory["poison_mushroom"]) > 0:
+        _add_action_option("Съесть красный гриб (опасно!)", "poison_mushroom")
     if water_portions > 0:
         _add_action_option("Попить воды (%d)" % water_portions, "drink")
+    if Vector2(player.position.x, player.position.z).distance_to(LOGGER_POS) <= 5.0:
+        _add_action_option("Осмотреть стоянку лесорубов", "logger")
     if Vector2(player.position.x, player.position.z).distance_to(CABIN_POS) <= 4.1:
         _add_action_option("Осмотреть заброшенную хижину", "cabin")
     if Vector2(player.position.x, player.position.z).distance_to(FIRE_POS) <= 3.5:
@@ -1284,6 +1395,9 @@ func _update_nearby_action() -> void:
     if here.distance_to(TENT_POS) <= 2.8:
         nearby_action_kind = "tent"
         nearby_button.text = "Отдохнуть в палатке"
+    elif here.distance_to(LOGGER_POS) <= 5.0:
+        nearby_action_kind = "logger"
+        nearby_button.text = "Осмотреть стоянку лесорубов"
     elif here.distance_to(CABIN_POS) <= 4.1:
         nearby_action_kind = "cabin"
         nearby_button.text = "Осмотреть заброшенную хижину"
@@ -1324,6 +1438,10 @@ func _update_nearby_action() -> void:
                     nearby_button.text = "Собрать ягоды"
                 elif kind == "mushroom":
                     nearby_button.text = "Собрать грибы"
+                elif kind == "herb":
+                    nearby_button.text = "Собрать лечебные травы"
+                elif kind == "poison_mushroom":
+                    nearby_button.text = "Собрать красный гриб"
     if nearby_action_kind != "":
         nearby_button.show()
 
@@ -1338,6 +1456,8 @@ func _perform_nearby_action() -> void:
             _show_sleep_panel()
         else:
             status_message = "Подойди ближе к палатке"
+    elif chosen == "logger":
+        _survival_action("logger")
     elif chosen == "cabin":
         _survival_action("cabin")
     elif chosen == "rest":
@@ -1484,7 +1604,7 @@ func _finish_mining() -> void:
     for i in range(obstacles.size() - 1, -1, -1):
         if obstacles[i]["node"] == r["node"]:
             obstacles.remove_at(i)
-    var kind: String = "wood" if r["kind"] == "tree" else "stone" if r["kind"] == "rock" else "mushroom" if r["kind"] == "mushroom" else str(r["kind"]) if r["kind"] == "iron" or r["kind"] == "silver" or r["kind"] == "gold" else "berry"
+    var kind: String = "wood" if r["kind"] == "tree" else "stone" if r["kind"] == "rock" else "mushroom" if r["kind"] == "mushroom" else str(r["kind"]) if r["kind"] == "iron" or r["kind"] == "silver" or r["kind"] == "gold" else "herb" if r["kind"] == "herb" else "poison_mushroom" if r["kind"] == "poison_mushroom" else "berry"
     var drop := Node3D.new()
     drop.position = Vector3(r["pos"].x, 0.35, r["pos"].y)
     add_child(drop)
@@ -1544,6 +1664,10 @@ func _blocked(pos: Vector2, radius: float) -> bool:
     return false
 
 func _physics_process(delta: float) -> void:
+    if poison_time > 0.0:
+        poison_time = maxf(0.0, poison_time - delta)
+        hunger = maxf(0.0, hunger - delta * 0.055)
+        thirst = maxf(0.0, thirst - delta * 0.075)
     if sleep_in_progress:
         _advance_sleep(delta)
         return
