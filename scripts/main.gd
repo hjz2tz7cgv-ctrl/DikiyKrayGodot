@@ -20,8 +20,9 @@ var player_visual: Node3D
 var player_facing := 0.0
 const FIRE_POS := Vector2(-3.0, 4.0)
 const BENCH_POS := Vector2(-3.0, 7.1)
-const CABIN_POS := Vector2(-23.0, 19.0)
+const CABIN_POS := Vector2(-39.0, 27.0)
 var cabin_searched := false
+var cabin_note_found := false
 var campfire_node: Node3D
 var campfire_light: OmniLight3D
 var fire_flames: Array[MeshInstance3D] = []
@@ -214,7 +215,7 @@ func _create_stream_and_hills() -> void:
     # Невысокие холмы и скальные выступы по краям карты.
     for i in range(19):
         var pos := Vector2(rng.randf_range(-56.0, 56.0), rng.randf_range(-56.0, 56.0))
-        if pos.length() < 16.0 or _is_lake(pos, 5.0) or _is_stream(pos, 5.0):
+        if pos.length() < 16.0 or pos.distance_to(CABIN_POS) < 9.0 or _is_lake(pos, 5.0) or _is_stream(pos, 5.0):
             continue
         var hill := Node3D.new()
         hill.position = Vector3(pos.x, -0.1, pos.y)
@@ -462,7 +463,7 @@ func _is_lake(pos: Vector2, margin := 0.0) -> bool:
     return pos.distance_to(LAKE_CENTER) < LAKE_RADIUS + margin
 
 func _can_place(pos: Vector2, radius: float) -> bool:
-    if _is_lake(pos, radius + 0.3) or _is_stream(pos, radius + 0.3):
+    if _is_lake(pos, radius + 0.3) or _is_stream(pos, radius + 0.3) or pos.distance_to(CABIN_POS) < radius + 5.0:
         return false
     if pos.length() < 3.3 or pos.distance_to(TENT_POS) < radius + 3.5 or pos.distance_to(FIRE_POS) < radius + 3.2 or pos.distance_to(BENCH_POS) < radius + 2.4:
         return false
@@ -556,17 +557,30 @@ func _create_scenery() -> void:
 func _create_forest_paths() -> void:
     # Светлая извилистая тропа от лагеря к заброшенной хижине.
     # Плоские пятна не блокируют движение и не требуют текстур.
-    var start := Vector2(-7.0, 8.0)
-    for i in range(36):
-        var t := float(i) / 35.0
-        var point := start.lerp(CABIN_POS, t)
-        point.x += sin(t * PI * 2.0) * 1.4
-        if _is_stream(point, 0.4) or _is_lake(point, 0.4):
-            continue
-        var patch := Node3D.new()
-        patch.position = Vector3(point.x, 0.013, point.y)
-        add_child(patch)
-        _mesh_sphere(patch, 0.95, Vector3.ZERO, Color("a28e63"), Vector3(1.25, 0.018, 0.8))
+    # Тропа проходит через существующий мост при Z=23, не по воде.
+    var bridge_z := 23.0
+    var bridge_x := _stream_center_x(bridge_z)
+    var waypoints: Array[Vector2] = [
+        Vector2(-7.0, 8.0),
+        Vector2(bridge_x + 5.2, bridge_z),
+        Vector2(bridge_x, bridge_z),
+        Vector2(bridge_x - 5.2, bridge_z),
+        CABIN_POS + Vector2(0.0, -3.5)
+    ]
+    for segment in range(waypoints.size() - 1):
+        var a := waypoints[segment]
+        var b := waypoints[segment + 1]
+        var steps := maxi(3, int(a.distance_to(b) * 1.8))
+        for i in range(steps):
+            var t := float(i) / float(steps)
+            var point := a.lerp(b, t)
+            # На мосту тропинка не рисуется поверх воды.
+            if _is_stream(point, 0.8) or _is_lake(point, 0.8):
+                continue
+            var patch := Node3D.new()
+            patch.position = Vector3(point.x, 0.013, point.y)
+            add_child(patch)
+            _mesh_sphere(patch, 0.7, Vector3.ZERO, Color("a28e63"), Vector3(1.2, 0.018, 0.8))
     # Заросли папоротника у тропы и в лесу.
     for i in range(85):
         var pos := _random_land_pos(56.0)
@@ -599,6 +613,10 @@ func _create_abandoned_cabin() -> void:
         roof.rotation.z = side * 0.33
     _mesh_box(cabin, Vector3(1.2, 0.7, 0.7), Vector3(0.4, 0.49, 0.6), Color("836044"))
     _mesh_box(cabin, Vector3(0.85, 0.14, 0.8), Vector3(0.4, 0.91, 0.6), Color("b19b6c"))
+    # Старый рюкзак, ящик с припасами и записка на столе.
+    _mesh_box(cabin, Vector3(0.65, 0.72, 0.42), Vector3(-1.2, 0.47, 0.55), Color("645b3d"))
+    _mesh_box(cabin, Vector3(0.85, 0.55, 0.8), Vector3(1.45, 0.38, 1.1), Color("765637"))
+    _mesh_box(cabin, Vector3(0.43, 0.035, 0.32), Vector3(0.4, 1.01, 0.6), Color("e1d2a3"))
     # Стены учитываются как препятствия, но вход открыт.
     for wall_data in [[Vector2(-2.75, 0), 0.7], [Vector2(2.75, 0), 0.7], [Vector2(0, 2.25), 0.7], [Vector2(-1.9, -2.25), 0.5], [Vector2(1.9, -2.25), 0.5]]:
         var offset: Vector2 = wall_data[0]
@@ -1094,6 +1112,8 @@ func _update_ui() -> void:
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
     bag_label.text = "РЮКЗАК\nДерево: %d    Камень: %d\nЯгоды: %d    Грибы: %d\nМясо: %d    Жареное: %d\nШкуры: %d    Копьё: %s\nКирка: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["mushroom"], inventory["meat"], inventory["cooked_meat"], inventory["hide"], "есть" if has_spear else "нет", "есть" if has_pickaxe else "нет"]
     bag_label.text += "\nЖелезо: %d  Серебро: %d  Золото: %d\nЖелезный инструмент: %s" % [inventory["iron"], inventory["silver"], inventory["gold"], "есть" if has_iron_tool else "нет"]
+    if cabin_note_found:
+        bag_label.text += "\nЗаписка из хижины: «03:17. Кто-то стоял у палатки...»"
     if quickbar != null:
         _refresh_quickbar()
     _update_minimap()
@@ -1150,9 +1170,10 @@ func _survival_action(kind: String) -> void:
             status_message = "Хижина уже осмотрена. Внутри тихо и пусто"
         else:
             cabin_searched = true
+            cabin_note_found = true
             inventory["wood"] += 3
             inventory["stone"] += 2
-            status_message = "В хижине найден тайник: +3 древесины, +2 камня"
+            status_message = "Тайник: +3 дерева, +2 камня. Записка: «03:17. Кто-то стоял у палатки...»"
     elif kind == "rest":
         if here.distance_to(BENCH_POS) <= 3.0 and not cooking_active:
             _sit_on_bench()
