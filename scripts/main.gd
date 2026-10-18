@@ -74,6 +74,7 @@ var bag_label: Label
 var zoom_label: Label
 var action_button: Button
 var nearby_button: Button
+var nearby_touch_ids: Dictionary = {}
 var water_portions := 0
 var action_menu: PanelContainer
 var action_list: VBoxContainer
@@ -579,6 +580,7 @@ func _create_ui() -> void:
     nearby_button.focus_mode = Control.FOCUS_NONE
     nearby_button.visible = false
     nearby_button.pressed.connect(_perform_nearby_action)
+    nearby_button.gui_input.connect(_nearby_button_gui_input)
     # Используем тот же HUD, что и работающие кнопки «Рюкзак» и «Действие».
     # Якоря задаются относительно реального размера экрана.
     root.add_child(nearby_button)
@@ -855,13 +857,22 @@ func _update_nearby_action() -> void:
     if nearby_action_kind != "":
         nearby_button.show()
 
+func _nearby_button_gui_input(event: InputEvent) -> void:
+    if event is InputEventScreenTouch:
+        if event.pressed:
+            nearby_touch_ids[event.index] = true
+        else:
+            nearby_touch_ids.erase(event.index)
+        get_viewport().set_input_as_handled()
+
 func _perform_nearby_action() -> void:
-    _update_nearby_action()
-    if nearby_action_kind == "cook":
+    # Не пересчитываем/прячем кнопку до обработки нажатия.
+    var chosen_kind: String = nearby_action_kind
+    if chosen_kind == "cook":
         _survival_action("cook")
-    elif nearby_action_kind == "water":
+    elif chosen_kind == "water":
         _survival_action("water")
-    elif nearby_action_kind == "drop":
+    elif chosen_kind == "drop":
         var here := Vector2(player.global_position.x, player.global_position.z)
         var closest := -1
         var best := 4.0
@@ -872,7 +883,7 @@ func _perform_nearby_action() -> void:
                 closest = i
         if closest >= 0:
             _pickup_index(closest)
-    elif nearby_action_kind == "resource":
+    elif chosen_kind == "resource":
         var index := _nearest_resource()
         if index >= 0 and bool(resources[index]["alive"]):
             # Та же добыча, что при нажатии непосредственно на гриб,
@@ -880,6 +891,7 @@ func _perform_nearby_action() -> void:
             pending_index = -1
             pending_kind = ""
             _begin_mining(index)
+            # Сбор ягод и грибов короткий; дерево и камень добываются со шкалой.
     _update_nearby_action()
 
 func _nearest_resource() -> int:
@@ -965,7 +977,7 @@ func _begin_mining(index: int) -> void:
     target_resource = index
     mining_active = true
     mining_progress = 0.0
-    status_message = "Добываем ресурс…"
+    status_message = "Собираем: " + str(resources[index]["kind"]) + "…"
     _update_ui()
 
 func _stop_mining() -> void:
@@ -1203,6 +1215,9 @@ func _input(event: InputEvent) -> void:
                 gather_direction = Vector2.ZERO
         else:
             active_touches.erase(event.index)
+            if nearby_touch_ids.has(event.index):
+                nearby_touch_ids.erase(event.index)
+                return
             if event.index == joystick_touch:
                 joystick_touch = -1
                 touch_move = Vector2.ZERO
@@ -1213,9 +1228,13 @@ func _input(event: InputEvent) -> void:
                 gather_direction = Vector2.ZERO
                 if event.position.distance_to(gather_origin) < 18.0:
                     _tap_world(event.position)
+            elif nearby_button != null and Rect2(nearby_button.global_position, nearby_button.size).has_point(event.position):
+                return
             elif active_touches.is_empty() and not (event.position.y < 70.0 and absf(event.position.x - get_viewport().get_visible_rect().size.x * 0.5) < 80.0):
                 _tap_world(event.position)
     elif event is InputEventScreenDrag:
+        if nearby_touch_ids.has(event.index):
+            return
         # Пальцы независимы: левый всегда двигает героя, правый — камеру.
         # Используем координаты КОНКРЕТНОГО пальца, не event.relative,
         # который в мобильном браузере может прыгать при двух касаниях.
@@ -1234,4 +1253,6 @@ func _unhandled_input(event: InputEvent) -> void:
         elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
             _zoom(1.0)
         elif event.button_index == MOUSE_BUTTON_LEFT:
+            if nearby_button != null and nearby_button.visible and nearby_button.get_global_rect().has_point(event.position):
+                return
             _tap_world(event.position)
