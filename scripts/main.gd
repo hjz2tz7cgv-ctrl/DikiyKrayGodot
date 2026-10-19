@@ -106,7 +106,8 @@ var hint_tween: Tween
 var last_hint_message := ""
 var progress_bar: ProgressBar
 var bag_panel: PanelContainer
-var bag_label: Label
+var bag_label: RichTextLabel
+var modal_shield: ColorRect
 var action_button: Button
 var nearby_button: Button
 var nearby_touch_ids: Dictionary = {}
@@ -889,16 +890,29 @@ func _create_ui() -> void:
     progress_bar.custom_minimum_size.y = 22
     progress_bar.visible = false
     bottom.add_child(progress_bar)
+    # Полноэкранный перехватчик касаний позади окон. Не пропускает ввод в 3D-мир.
+    modal_shield = ColorRect.new()
+    modal_shield.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    modal_shield.color = Color(0.04, 0.07, 0.05, 0.48)
+    modal_shield.mouse_filter = Control.MOUSE_FILTER_STOP
+    modal_shield.visible = false
+    root.add_child(modal_shield)
     bag_panel = PanelContainer.new()
     root.add_child(bag_panel)
     bag_panel.set_anchors_preset(Control.PRESET_CENTER)
-    bag_panel.offset_left = -155
-    bag_panel.offset_right = 155
-    bag_panel.offset_top = -130
-    bag_panel.offset_bottom = 130
+    var bag_screen := get_viewport().get_visible_rect().size
+    var bag_width := minf(600.0, bag_screen.x - 38.0)
+    var bag_height := minf(550.0, bag_screen.y - 44.0)
+    bag_panel.offset_left = -bag_width * 0.5
+    bag_panel.offset_right = bag_width * 0.5
+    bag_panel.offset_top = -bag_height * 0.5
+    bag_panel.offset_bottom = bag_height * 0.5
+    bag_panel.mouse_filter = Control.MOUSE_FILTER_STOP
     bag_panel.visible = false
     var bag_col := VBoxContainer.new()
-    bag_col.add_theme_constant_override("separation", 8)
+    bag_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    bag_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    bag_col.add_theme_constant_override("separation", 10)
     bag_panel.add_child(bag_col)
     survival_label = Label.new()
     survival_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
@@ -909,8 +923,20 @@ func _create_ui() -> void:
     survival_label.add_theme_font_size_override("font_size", 20)
     survival_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     root.add_child(survival_label)
-    bag_label = Label.new()
-    bag_label.add_theme_font_size_override("font_size", 18)
+    var bag_title := Label.new()
+    bag_title.text = "🎒  РЮКЗАК"
+    bag_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    bag_title.add_theme_font_size_override("font_size", 25)
+    bag_col.add_child(bag_title)
+    bag_label = RichTextLabel.new()
+    bag_label.bbcode_enabled = true
+    bag_label.scroll_active = true
+    bag_label.fit_content = false
+    bag_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    bag_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    bag_label.add_theme_font_size_override("normal_font_size", 18)
+    bag_label.add_theme_font_size_override("bold_font_size", 19)
+    bag_label.mouse_filter = Control.MOUSE_FILTER_STOP
     bag_col.add_child(bag_label)
     # Рюкзак показывает только предметы; все действия вынесены в кнопку «Действие».
     # Действия у костра и воды теперь находятся рядом с объектами, не в рюкзаке.
@@ -987,6 +1013,7 @@ func _create_ui() -> void:
     craft_panel.offset_top = -craft_height * 0.5
     craft_panel.offset_bottom = craft_height * 0.5
     craft_panel.visible = false
+    craft_panel.mouse_filter = Control.MOUSE_FILTER_STOP
     var craft_layout := VBoxContainer.new()
     craft_layout.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     craft_layout.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1185,6 +1212,8 @@ func _toggle_craft() -> void:
         action_menu.visible = false
         bag_panel.visible = false
         sleep_panel.visible = false
+    if modal_shield != null:
+        modal_shield.visible = _interface_modal_open()
     _update_ui()
 
 func _tool_owned(tool_id: String) -> bool:
@@ -1286,6 +1315,8 @@ func _toggle_bag() -> void:
         _release_gameplay_touches()
         action_menu.visible = false
         craft_panel.visible = false
+    if modal_shield != null:
+        modal_shield.visible = _interface_modal_open()
     _update_nearby_action()
     _update_ui()
 
@@ -1326,12 +1357,20 @@ func _update_ui() -> void:
         var hour := int(day_clock) % 24
         var minute := int((day_clock - floor(day_clock)) * 60.0)
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
-    bag_label.text = "РЮКЗАК\nДерево: %d    Камень: %d\nЯгоды: %d    Грибы: %d\nМясо: %d    Жареное: %d\nШкуры: %d    Копьё: %s\nКирка: %s" % [inventory["wood"], inventory["stone"], inventory["berry"], inventory["mushroom"], inventory["meat"], inventory["cooked_meat"], inventory["hide"], "есть" if has_spear else "нет", "есть" if has_pickaxe else "нет"]
-    bag_label.text += "\nЛопата: %s  Раскопано тайников: %d" % ["есть" if has_shovel else "нет", _dug_cache_count()]
-    bag_label.text += "\nЖелезо: %d  Серебро: %d  Золото: %d\nЖелезный инструмент: %s" % [inventory["iron"], inventory["silver"], inventory["gold"], "есть" if has_iron_tool else "нет"]
-    bag_label.text += "\\nТравы: %d  Красные грибы: %d\\nПовязки: %d  Отвары: %d" % [inventory["herb"], inventory["poison_mushroom"], inventory["bandage"], inventory["herbal_tea"]]
+    var bag_text := "[center][color=#e8d7a8]СОДЕРЖИМОЕ РЮКЗАКА[/color][/center]\n"
+    bag_text += "[color=#c3dcae][b]🌲 МАТЕРИАЛЫ[/b][/color]\n"
+    bag_text += "Древесина: %d       Камень: %d\nЖелезо: %d       Серебро: %d       Золото: %d\n\n" % [inventory["wood"], inventory["stone"], inventory["iron"], inventory["silver"], inventory["gold"]]
+    bag_text += "[color=#c3dcae][b]🍄 ЕДА И РАСТЕНИЯ[/b][/color]\n"
+    bag_text += "Ягоды: %d       Грибы: %d\nКрасные грибы: %d       Травы: %d\nМясо: %d       Жареное мясо: %d\n\n" % [inventory["berry"], inventory["mushroom"], inventory["poison_mushroom"], inventory["herb"], inventory["meat"], inventory["cooked_meat"]]
+    bag_text += "[color=#c3dcae][b]🛠 СНАРЯЖЕНИЕ[/b][/color]\n"
+    bag_text += "Копьё: %s       Кирка: %s\nЛопата: %s       Железный инструмент: %s\nШкуры: %d\n\n" % ["есть" if has_spear else "нет", "есть" if has_pickaxe else "нет", "есть" if has_shovel else "нет", "есть" if has_iron_tool else "нет", inventory["hide"]]
+    bag_text += "[color=#c3dcae][b]✚ ЛЕЧЕНИЕ И НАХОДКИ[/b][/color]\n"
+    bag_text += "Повязки: %d       Отвары: %d\nРаскопано тайников: %d" % [inventory["bandage"], inventory["herbal_tea"], _dug_cache_count()]
     if cabin_note_found:
-        bag_label.text += "\nЗаписка из хижины: «03:17. Кто-то стоял у палатки...»"
+        bag_text += "\n\n[color=#e8d7a8][b]📜 ЗАПИСКА ИЗ ХИЖИНЫ[/b][/color]\n«03:17. Кто-то стоял у палатки...»"
+    bag_label.text = bag_text
+    if modal_shield != null:
+        modal_shield.visible = _interface_modal_open()
     if quickbar != null:
         _refresh_quickbar()
     _update_minimap()
@@ -1851,7 +1890,7 @@ func _physics_process(delta: float) -> void:
         day_count += 1
     _update_lighting()
     _animate_pickup(delta)
-    if pending_index >= 0:
+    if pending_index >= 0 and not _interface_modal_open():
         var here := Vector2(player.position.x, player.position.z)
         if here.distance_to(pending_pos) <= 2.25:
             if pending_kind == "resource" and pending_index < resources.size() and resources[pending_index]["alive"]:
@@ -2027,6 +2066,8 @@ func _input(event: InputEvent) -> void:
             if bag_button != null and bag_button.get_global_rect().has_point(event.position):
                 return
             if craft_button != null and craft_button.get_global_rect().has_point(event.position):
+                return
+            if modal_shield != null and modal_shield.visible:
                 return
             active_touches[event.index] = event.position
             var viewport_width := get_viewport().get_visible_rect().size.x
