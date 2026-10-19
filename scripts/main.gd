@@ -106,7 +106,8 @@ var hint_tween: Tween
 var last_hint_message := ""
 var progress_bar: ProgressBar
 var bag_panel: PanelContainer
-var bag_label: RichTextLabel
+var bag_item_counts: Dictionary = {}
+var bag_note_label: Label
 var modal_shield: ColorRect
 var action_button: Button
 var nearby_button: Button
@@ -963,16 +964,35 @@ func _create_ui() -> void:
     bag_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     bag_title.add_theme_font_size_override("font_size", 25)
     bag_col.add_child(bag_title)
-    bag_label = RichTextLabel.new()
-    bag_label.bbcode_enabled = true
-    bag_label.scroll_active = true
-    bag_label.fit_content = false
-    bag_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    bag_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    bag_label.add_theme_font_size_override("normal_font_size", 18)
-    bag_label.add_theme_font_size_override("bold_font_size", 19)
-    bag_label.mouse_filter = Control.MOUSE_FILTER_STOP
-    bag_col.add_child(bag_label)
+    var bag_scroll := ScrollContainer.new()
+    bag_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    bag_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    bag_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    bag_scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+    bag_col.add_child(bag_scroll)
+    var sections := VBoxContainer.new()
+    sections.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    sections.add_theme_constant_override("separation", 12)
+    bag_scroll.add_child(sections)
+    _add_bag_section(sections, "МАТЕРИАЛЫ", [
+        ["wood", "Дерево", "🪵"], ["stone", "Камень", "🪨"],
+        ["iron", "Железо", "⛏"], ["silver", "Серебро", "◇"], ["gold", "Золото", "◆"]])
+    _add_bag_section(sections, "ЕДА И РАСТЕНИЯ", [
+        ["berry", "Ягоды", "●"], ["mushroom", "Грибы", "🍄"],
+        ["poison_mushroom", "Яд. гриб", "☠"], ["herb", "Травы", "🌿"],
+        ["meat", "Мясо", "🥩"], ["cooked_meat", "Жареное", "🍖"]])
+    _add_bag_section(sections, "СНАРЯЖЕНИЕ", [
+        ["spear_tool", "Копьё", "⚔"], ["pickaxe_tool", "Кирка", "⛏"],
+        ["shovel_tool", "Лопата", "♠"], ["iron_tool", "Инструмент", "⚒"],
+        ["hide", "Шкуры", "▧"]])
+    _add_bag_section(sections, "ЛЕЧЕНИЕ И НАХОДКИ", [
+        ["bandage", "Повязки", "+"], ["herbal_tea", "Отвары", "♨"],
+        ["cache_count", "Тайники", "⌖"]])
+    bag_note_label = Label.new()
+    bag_note_label.text = "📜 Записка из хижины: «03:17. Кто-то стоял у палатки...»"
+    bag_note_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    bag_note_label.visible = false
+    sections.add_child(bag_note_label)
     # Рюкзак показывает только предметы; все действия вынесены в кнопку «Действие».
     # Действия у костра и воды теперь находятся рядом с объектами, не в рюкзаке.
     action_button = Button.new()
@@ -1344,6 +1364,51 @@ func _finish_hunt(index: int) -> void:
     status_message = "Охота завершена! Нажми на мясо и шкуру"
     _update_ui()
 
+func _add_bag_section(parent: VBoxContainer, heading: String, items: Array) -> void:
+    var title_label := Label.new()
+    title_label.text = heading
+    title_label.add_theme_font_size_override("font_size", 17)
+    title_label.add_theme_color_override("font_color", Color("d9d0a9"))
+    parent.add_child(title_label)
+    var grid := GridContainer.new()
+    grid.columns = 4
+    grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    grid.add_theme_constant_override("h_separation", 6)
+    grid.add_theme_constant_override("v_separation", 6)
+    parent.add_child(grid)
+    for item in items:
+        var tile := PanelContainer.new()
+        tile.custom_minimum_size = Vector2(92, 91)
+        tile.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        tile.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        var style := StyleBoxFlat.new()
+        style.bg_color = Color(0.13, 0.21, 0.15, 0.94)
+        style.border_color = Color(0.46, 0.56, 0.39, 0.85)
+        style.set_border_width_all(1)
+        style.set_corner_radius_all(7)
+        tile.add_theme_stylebox_override("panel", style)
+        grid.add_child(tile)
+        var content := VBoxContainer.new()
+        content.alignment = BoxContainer.ALIGNMENT_CENTER
+        content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        tile.add_child(content)
+        var symbol := Label.new()
+        symbol.text = str(item[2])
+        symbol.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+        symbol.add_theme_font_size_override("font_size", 24)
+        content.add_child(symbol)
+        var item_name := Label.new()
+        item_name.text = str(item[1])
+        item_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+        item_name.add_theme_font_size_override("font_size", 12)
+        content.add_child(item_name)
+        var quantity := Label.new()
+        quantity.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+        quantity.add_theme_font_size_override("font_size", 16)
+        quantity.add_theme_color_override("font_color", Color("f4dda2"))
+        content.add_child(quantity)
+        bag_item_counts[str(item[0])] = quantity
+
 func _toggle_bag() -> void:
     bag_panel.visible = not bag_panel.visible
     if bag_panel.visible:
@@ -1392,18 +1457,20 @@ func _update_ui() -> void:
         var hour := int(day_clock) % 24
         var minute := int((day_clock - floor(day_clock)) * 60.0)
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
-    var bag_text := "[center][color=#e8d7a8]СОДЕРЖИМОЕ РЮКЗАКА[/color][/center]\n"
-    bag_text += "[color=#c3dcae][b]🌲 МАТЕРИАЛЫ[/b][/color]\n"
-    bag_text += "Древесина: %d       Камень: %d\nЖелезо: %d       Серебро: %d       Золото: %d\n\n" % [inventory["wood"], inventory["stone"], inventory["iron"], inventory["silver"], inventory["gold"]]
-    bag_text += "[color=#c3dcae][b]🍄 ЕДА И РАСТЕНИЯ[/b][/color]\n"
-    bag_text += "Ягоды: %d       Грибы: %d\nКрасные грибы: %d       Травы: %d\nМясо: %d       Жареное мясо: %d\n\n" % [inventory["berry"], inventory["mushroom"], inventory["poison_mushroom"], inventory["herb"], inventory["meat"], inventory["cooked_meat"]]
-    bag_text += "[color=#c3dcae][b]🛠 СНАРЯЖЕНИЕ[/b][/color]\n"
-    bag_text += "Копьё: %s       Кирка: %s\nЛопата: %s       Железный инструмент: %s\nШкуры: %d\n\n" % ["есть" if has_spear else "нет", "есть" if has_pickaxe else "нет", "есть" if has_shovel else "нет", "есть" if has_iron_tool else "нет", inventory["hide"]]
-    bag_text += "[color=#c3dcae][b]✚ ЛЕЧЕНИЕ И НАХОДКИ[/b][/color]\n"
-    bag_text += "Повязки: %d       Отвары: %d\nРаскопано тайников: %d" % [inventory["bandage"], inventory["herbal_tea"], _dug_cache_count()]
-    if cabin_note_found:
-        bag_text += "\n\n[color=#e8d7a8][b]📜 ЗАПИСКА ИЗ ХИЖИНЫ[/b][/color]\n«03:17. Кто-то стоял у палатки...»"
-    bag_label.text = bag_text
+    if bag_panel.visible:
+        for key in bag_item_counts.keys():
+            var amount := 0
+            match str(key):
+                "spear_tool": amount = 1 if has_spear else 0
+                "pickaxe_tool": amount = 1 if has_pickaxe else 0
+                "shovel_tool": amount = 1 if has_shovel else 0
+                "iron_tool": amount = 1 if has_iron_tool else 0
+                "cache_count": amount = _dug_cache_count()
+                _: amount = int(inventory.get(key, 0))
+            var quantity_label: Label = bag_item_counts[key]
+            quantity_label.text = "×%d" % amount
+        if bag_note_label != null:
+            bag_note_label.visible = cabin_note_found
     if modal_shield != null:
         modal_shield.visible = _interface_modal_open()
     if quickbar != null:
