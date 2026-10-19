@@ -269,28 +269,63 @@ func _create_stream_crossings() -> void:
             for branch_x in [-2.4, 2.1]:
                 _mesh_box(crossing, Vector3(0.32, 0.28, 1.85), Vector3(branch_x, 0.47, 0.45), Color("64422d"))
 
+func _ore_crystal(parent: Node3D, sides: int, height: float, width: float, position: Vector3, color: Color) -> void:
+    # Гранёный кристалл: 4, 6 или 8 боковых граней, не круглый шар.
+    var crystal := MeshInstance3D.new()
+    var mesh := CylinderMesh.new()
+    mesh.top_radius = width * 0.35
+    mesh.bottom_radius = width
+    mesh.height = height
+    mesh.radial_segments = sides
+    mesh.rings = 1
+    crystal.mesh = mesh
+    crystal.position = position
+    crystal.rotation.y = rng.randf_range(0.0, TAU)
+    var material := StandardMaterial3D.new()
+    material.albedo_color = color
+    material.roughness = 0.65
+    material.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+    crystal.material_override = material
+    parent.add_child(crystal)
+
 func _create_ore() -> void:
+    # Часть месторождений находится рядом с лагерем, остальные — в большом мире.
+    # Железо — оранжево-бурое, серебро — светло-серое, золото — жёлтое.
     var types := ["iron", "silver", "gold"]
-    var colors := [Color("9c6b51"), Color("c1c8d0"), Color("d5ad3b")]
-    for i in range(75):
-        var kind: String = types[0] if i < 45 else types[1] if i < 65 else types[2]
+    var colors := [Color("ae714c"), Color("c5d3df"), Color("e5b83f")]
+    for i in range(105):
+        var kind: String = types[0] if i < 63 else types[1] if i < 88 else types[2]
         var pos := Vector2.ZERO
         var found := false
-        for attempt in range(100):
-            pos = _random_land_pos(230.0)
-            if _can_place(pos, 1.1) and (kind != "gold" or _is_stream(pos, 8.0)):
-                found = true
-                break
+        for attempt in range(160):
+            # Первые 24 залежи распределяем поближе к стартовой зоне.
+            if i < 24:
+                pos = Vector2(rng.randf_range(-48.0, 48.0), rng.randf_range(-48.0, 48.0))
+            else:
+                pos = _random_land_pos(225.0)
+            if not _can_place(pos, 1.6):
+                continue
+            if pos.distance_to(CABIN_POS) < 10.0 or pos.distance_to(LOGGER_POS) < 10.0:
+                continue
+            if kind == "gold" and not _is_stream(pos, 11.0) and attempt < 100:
+                continue
+            found = true
+            break
         if not found:
             continue
         var ore := Node3D.new()
+        ore.name = "Ore_%s_%d" % [kind, i]
         ore.position = Vector3(pos.x, 0, pos.y)
         add_child(ore)
-        _mesh_sphere(ore, 1.1, Vector3(0, 0.62, 0), Color("626d70"), Vector3(1.2, 0.72, 1.0))
+        # Угловатая каменная основа, из которой выступают цветные кристаллы.
+        _ore_crystal(ore, 6, 1.05, 1.05, Vector3(0, 0.50, 0), Color("5c6367"))
         var color: Color = colors[types.find(kind)]
         for j in range(5):
-            _mesh_sphere(ore, 0.23, Vector3(rng.randf_range(-0.65, 0.65), rng.randf_range(0.6, 1.05), rng.randf_range(-0.6, 0.6)), color)
-        obstacles.append({"pos": pos, "radius": 0.95, "node": ore})
+            var sides := 4 if j % 3 == 0 else 6 if j % 3 == 1 else 8
+            var h := rng.randf_range(0.65, 1.45)
+            var offset := Vector3(rng.randf_range(-0.58, 0.58), h * 0.5 + 0.35, rng.randf_range(-0.58, 0.58))
+            _ore_crystal(ore, sides, h, rng.randf_range(0.20, 0.38), offset, color)
+        obstacles.append({"pos": pos, "radius": 1.15, "node": ore})
         resources.append({"kind": kind, "pos": pos, "node": ore, "duration": 6.0, "large": true, "alive": true})
 
 func _create_tent() -> void:
