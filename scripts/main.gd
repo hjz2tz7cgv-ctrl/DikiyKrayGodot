@@ -975,60 +975,73 @@ func _create_ui() -> void:
     close.text = "Закрыть"
     close.pressed.connect(_toggle_bag)
     bag_col.add_child(close)
-    # Отдельное окно крафта: ресурсы расходуются только по кнопке «Создать».
+    # Мастерская: адаптивное окно, вертикальная прокрутка и всегда видимое закрытие.
     craft_panel = PanelContainer.new()
     root.add_child(craft_panel)
     craft_panel.set_anchors_preset(Control.PRESET_CENTER)
-    craft_panel.offset_left = -160
-    craft_panel.offset_right = 160
-    craft_panel.offset_top = -265
-    craft_panel.offset_bottom = 265
+    var screen_size := get_viewport().get_visible_rect().size
+    var craft_width := minf(570.0, maxf(260.0, screen_size.x - 36.0))
+    var craft_height := minf(590.0, maxf(260.0, screen_size.y - 36.0))
+    craft_panel.offset_left = -craft_width * 0.5
+    craft_panel.offset_right = craft_width * 0.5
+    craft_panel.offset_top = -craft_height * 0.5
+    craft_panel.offset_bottom = craft_height * 0.5
     craft_panel.visible = false
-    var craft_scroll := ScrollContainer.new()
-    craft_scroll.custom_minimum_size = Vector2(310, 0)
-    craft_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-    craft_panel.add_child(craft_scroll)
-    var craft_col := VBoxContainer.new()
-    craft_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    craft_scroll.add_child(craft_col)
+    var craft_layout := VBoxContainer.new()
+    craft_layout.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    craft_layout.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    craft_layout.add_theme_constant_override("separation", 7)
+    craft_panel.add_child(craft_layout)
     var craft_title := Label.new()
-    craft_title.text = "МАСТЕРСКАЯ\nИнструменты"
+    craft_title.text = "МАСТЕРСКАЯ"
     craft_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    craft_title.add_theme_font_size_override("font_size", 25)
-    craft_col.add_child(craft_title)
+    craft_title.add_theme_font_size_override("font_size", 24)
+    craft_layout.add_child(craft_title)
     var craft_description := Label.new()
     craft_description.text = "Инструменты и лечебные предметы"
     craft_description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    craft_col.add_child(craft_description)
+    craft_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    craft_description.add_theme_font_size_override("font_size", 15)
+    craft_layout.add_child(craft_description)
+    var craft_scroll := ScrollContainer.new()
+    craft_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    craft_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+    craft_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    craft_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    craft_layout.add_child(craft_scroll)
+    var craft_col := VBoxContainer.new()
+    craft_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    craft_col.add_theme_constant_override("separation", 6)
+    craft_scroll.add_child(craft_col)
     craft_recipe_button = Button.new()
-    craft_recipe_button.custom_minimum_size.y = 55
     craft_recipe_button.pressed.connect(_craft_spear)
     craft_col.add_child(craft_recipe_button)
     pickaxe_recipe_button = Button.new()
-    pickaxe_recipe_button.custom_minimum_size.y = 55
     pickaxe_recipe_button.pressed.connect(_craft_pickaxe)
     craft_col.add_child(pickaxe_recipe_button)
     iron_recipe_button = Button.new()
-    iron_recipe_button.custom_minimum_size.y = 55
     iron_recipe_button.pressed.connect(_craft_iron_tool)
     craft_col.add_child(iron_recipe_button)
     bandage_recipe_button = Button.new()
-    bandage_recipe_button.custom_minimum_size.y = 48
     bandage_recipe_button.pressed.connect(_craft_bandage)
     craft_col.add_child(bandage_recipe_button)
     tea_recipe_button = Button.new()
-    tea_recipe_button.custom_minimum_size.y = 48
     tea_recipe_button.pressed.connect(_craft_tea)
     craft_col.add_child(tea_recipe_button)
     shovel_recipe_button = Button.new()
-    shovel_recipe_button.custom_minimum_size.y = 48
     shovel_recipe_button.pressed.connect(_craft_shovel)
     craft_col.add_child(shovel_recipe_button)
+    for recipe_button in [craft_recipe_button, pickaxe_recipe_button, iron_recipe_button, bandage_recipe_button, tea_recipe_button, shovel_recipe_button]:
+        recipe_button.custom_minimum_size.y = 66
+        recipe_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        recipe_button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        recipe_button.add_theme_font_size_override("font_size", 17)
+        recipe_button.focus_mode = Control.FOCUS_NONE
     var craft_close := Button.new()
     craft_close.text = "Закрыть"
     craft_close.custom_minimum_size.y = 48
     craft_close.pressed.connect(_toggle_craft)
-    craft_col.add_child(craft_close)
+    craft_layout.add_child(craft_close)
     sleep_panel = PanelContainer.new()
     sleep_panel.set_anchors_preset(Control.PRESET_CENTER)
     sleep_panel.offset_left = -190
@@ -1321,22 +1334,22 @@ func _update_ui() -> void:
         _refresh_quickbar()
     _update_minimap()
     if craft_recipe_button != null:
-        craft_recipe_button.text = "Копьё уже создано" if has_spear else "Создать копьё (3 дерева + 1 камень)"
+        craft_recipe_button.text = "Копьё уже создано" if has_spear else "Создать копьё\n3 дерева + 1 камень"
         craft_recipe_button.disabled = has_spear or inventory["wood"] < 3 or inventory["stone"] < 1
     if iron_recipe_button != null:
-        iron_recipe_button.text = "Железный инструмент готов" if has_iron_tool else "Железный инструмент (2 железа + 2 дерева)"
+        iron_recipe_button.text = "Железный инструмент готов" if has_iron_tool else "Железный инструмент\n2 железа + 2 дерева"
         iron_recipe_button.disabled = has_iron_tool or inventory["iron"] < 2 or inventory["wood"] < 2
     if bandage_recipe_button != null:
-        bandage_recipe_button.text = "Повязка (2 травы + 1 шкура)"
+        bandage_recipe_button.text = "Повязка\n2 травы + 1 шкура"
         bandage_recipe_button.disabled = inventory["herb"] < 2 or inventory["hide"] < 1
     if tea_recipe_button != null:
-        tea_recipe_button.text = "Травяной отвар (2 травы + 1 вода)"
+        tea_recipe_button.text = "Травяной отвар\n2 травы + 1 вода"
         tea_recipe_button.disabled = inventory["herb"] < 2 or water_portions < 1
     if shovel_recipe_button != null:
-        shovel_recipe_button.text = "Лопата готова" if has_shovel else "Создать лопату (3 дерева + 2 железа)"
+        shovel_recipe_button.text = "Лопата готова" if has_shovel else "Создать лопату\n3 дерева + 2 железа"
         shovel_recipe_button.disabled = has_shovel or inventory["wood"] < 3 or inventory["iron"] < 2
     if pickaxe_recipe_button != null:
-        pickaxe_recipe_button.text = "Кирка уже создана" if has_pickaxe else "Создать кирку (3 дерева + 2 камня)"
+        pickaxe_recipe_button.text = "Кирка уже создана" if has_pickaxe else "Создать кирку\n3 дерева + 2 камня"
         pickaxe_recipe_button.disabled = has_pickaxe or inventory["wood"] < 3 or inventory["stone"] < 2
 
 func _sit_on_bench() -> void:
