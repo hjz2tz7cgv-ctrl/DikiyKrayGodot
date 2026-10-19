@@ -1181,6 +1181,7 @@ func _craft_iron_tool() -> void:
 func _toggle_craft() -> void:
     craft_panel.visible = not craft_panel.visible
     if craft_panel.visible:
+        _release_gameplay_touches()
         action_menu.visible = false
         bag_panel.visible = false
         sleep_panel.visible = false
@@ -1282,6 +1283,7 @@ func _finish_hunt(index: int) -> void:
 func _toggle_bag() -> void:
     bag_panel.visible = not bag_panel.visible
     if bag_panel.visible:
+        _release_gameplay_touches()
         action_menu.visible = false
         craft_panel.visible = false
     _update_nearby_action()
@@ -1668,7 +1670,7 @@ func _nearest_resource() -> int:
     return closest
 
 func _tap_world(screen: Vector2) -> void:
-    if camera == null or bag_panel.visible or sleep_panel.visible or sleep_in_progress:
+    if camera == null or _interface_modal_open():
         return
     var origin := camera.project_ray_origin(screen)
     var ray_dir := camera.project_ray_normal(screen)
@@ -1867,7 +1869,7 @@ func _physics_process(delta: float) -> void:
     # Джойстик задаёт направление относительно взгляда персонажа в момент касания.
     # Направление фиксируется до отпускания пальца, чтобы движение не закручивалось.
     var direction := Vector2.ZERO
-    var steering_active := joystick_touch != -1 and touch_move.length() > 0.12
+    var steering_active := not _interface_modal_open() and joystick_touch != -1 and touch_move.length() > 0.12
     if steering_active:
         direction = Vector2(
             cos(joystick_basis_yaw) * touch_move.x + sin(joystick_basis_yaw) * touch_move.y,
@@ -1902,13 +1904,15 @@ func _physics_process(delta: float) -> void:
         if direction.length() > 0.1:
             var hunt_facing := atan2(-direction.x, -direction.y)
             player_facing = lerp_angle(player_facing, hunt_facing, 1.0 - exp(-10.0 * delta))
-    var keyboard_direction := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
+    var keyboard_direction := Vector2.ZERO if _interface_modal_open() else Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
     if keyboard_direction.length() > 0.12:
         hunt_target = -1
         direction = keyboard_direction
         var keyboard_facing := atan2(-direction.x, -direction.y)
         player_facing = lerp_angle(player_facing, keyboard_facing, 1.0 - exp(-10.0 * delta))
     direction = direction.limit_length(1.0)
+    if _interface_modal_open():
+        direction = Vector2.ZERO
     if cooking_active:
         direction = Vector2.ZERO
     if sitting and not cooking_active and (direction.length() > 0.1 or steering_active):
@@ -1931,7 +1935,7 @@ func _physics_process(delta: float) -> void:
     player.position.x = current.x
     player.position.z = current.y
     _position_camera(delta)
-    if gather_touch != -1 and gather_direction.length() > 0.2 and not mining_active and not cooking_active:
+    if not _interface_modal_open() and gather_touch != -1 and gather_direction.length() > 0.2 and not mining_active and not cooking_active:
         var nearest := _nearest_resource()
         if nearest >= 0:
             _begin_mining(nearest)
@@ -1991,7 +1995,25 @@ func _move_animals(delta: float) -> void:
             animal["node"].position.z = new_pos.y
         animals[i] = animal
 
+func _interface_modal_open() -> bool:
+    return (bag_panel != null and bag_panel.visible) or (craft_panel != null and craft_panel.visible) or (action_menu != null and action_menu.visible) or (sleep_panel != null and sleep_panel.visible) or sleep_in_progress
+
+func _release_gameplay_touches() -> void:
+    joystick_touch = -1
+    gather_touch = -1
+    touch_move = Vector2.ZERO
+    gather_direction = Vector2.ZERO
+    active_touches.clear()
+    nearby_touch_ids.clear()
+    pending_index = -1
+    pending_kind = ""
+    hunt_target = -1
+
 func _input(event: InputEvent) -> void:
+    # Открытое окно получает все касания; мир, камера и джойстик заблокированы.
+    if _interface_modal_open():
+        _release_gameplay_touches()
+        return
     if event is InputEventScreenTouch:
         if event.pressed:
             # Сначала перехватываем нажатие на кнопку, ДО джойстика и камеры.
@@ -2066,6 +2088,8 @@ func _input(event: InputEvent) -> void:
         active_touches[event.index] = event.position
 
 func _unhandled_input(event: InputEvent) -> void:
+    if _interface_modal_open():
+        return
     if event is InputEventMouseButton and event.pressed:
         if event.button_index == MOUSE_BUTTON_WHEEL_UP:
             _zoom(-1.0)
