@@ -50,6 +50,8 @@ var has_spear := false
 var has_pickaxe := false
 var has_shovel := false
 var shovel_recipe_button: Button
+var build_buttons: Dictionary = {}
+var built_structures: Array[Dictionary] = []
 var caches: Array[Dictionary] = []
 var digging_active := false
 var digging_index := -1
@@ -1113,6 +1115,20 @@ func _create_ui() -> void:
     shovel_recipe_button = Button.new()
     shovel_recipe_button.pressed.connect(_craft_shovel)
     craft_col.add_child(shovel_recipe_button)
+    var build_heading := Label.new()
+    build_heading.text = "СТРОИТЕЛЬСТВО — рядом с персонажем"
+    build_heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    build_heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    craft_col.add_child(build_heading)
+    for build_kind in ["storage", "firepit", "shelter"]:
+        var build_button := Button.new()
+        build_button.custom_minimum_size.y = 66
+        build_button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        build_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        build_button.focus_mode = Control.FOCUS_NONE
+        build_button.pressed.connect(_build_structure.bind(build_kind))
+        craft_col.add_child(build_button)
+        build_buttons[build_kind] = build_button
     for recipe_button in [craft_recipe_button, pickaxe_recipe_button, iron_recipe_button, bandage_recipe_button, tea_recipe_button, shovel_recipe_button]:
         recipe_button.custom_minimum_size.y = 66
         recipe_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1259,6 +1275,74 @@ func _craft_iron_tool() -> void:
     else:
         status_message = "Нужно 2 железа и 2 дерева"
     _update_ui()
+
+func _build_structure(kind: String) -> void:
+    # Первое строительство: готовая постройка появляется на свободной суше
+    # рядом с игроком. Вода, другие постройки и деревья запрещены.
+    var costs := {"storage": Vector2i(6, 2), "firepit": Vector2i(3, 5), "shelter": Vector2i(12, 6)}
+    if not costs.has(kind):
+        return
+    var cost: Vector2i = costs[kind]
+    if inventory["wood"] < cost.x or inventory["stone"] < cost.y:
+        status_message = "Недостаточно древесины или камней"
+        _update_ui()
+        return
+    var origin := Vector2(player.global_position.x, player.global_position.z)
+    var build_radius := 1.6 if kind == "shelter" else 1.0
+    var chosen := Vector2.ZERO
+    var valid := false
+    for distance in [5.0, 7.0, 9.0]:
+        for step in range(12):
+            var angle := float(step) * TAU / 12.0
+            var candidate := origin + Vector2(cos(angle), sin(angle)) * distance
+            if absf(candidate.x) > WORLD_LIMIT - 5.0 or absf(candidate.y) > WORLD_LIMIT - 5.0:
+                continue
+            if not _can_place(candidate, build_radius + 1.2):
+                continue
+            var free := true
+            for building in built_structures:
+                if candidate.distance_to(building["pos"]) < build_radius + float(building["radius"]) + 2.0:
+                    free = false
+                    break
+            if free:
+                chosen = candidate
+                valid = true
+                break
+        if valid:
+            break
+    if not valid:
+        status_message = "Нет свободного места рядом. Отойди от воды и деревьев"
+        _update_ui()
+        return
+    inventory["wood"] -= cost.x
+    inventory["stone"] -= cost.y
+    var building := Node3D.new()
+    building.position = Vector3(chosen.x, 0, chosen.y)
+    add_child(building)
+    if kind == "storage":
+        _mesh_box(building, Vector3(1.9, 1.05, 1.25), Vector3(0, 0.55, 0), Color("8b643c"))
+        _mesh_box(building, Vector3(2.1, 0.17, 1.4), Vector3(0, 1.13, 0), Color("b38b56"))
+        _mesh_box(building, Vector3(0.14, 1.25, 1.42), Vector3(-0.78, 0.6, 0), Color("59462f"))
+        _mesh_box(building, Vector3(0.14, 1.25, 1.42), Vector3(0.78, 0.6, 0), Color("59462f"))
+    elif kind == "firepit":
+        for i in range(9):
+            var angle := TAU * float(i) / 9.0
+            _mesh_sphere(building, 0.30, Vector3(cos(angle) * 0.85, 0.20, sin(angle) * 0.85), Color("73736c"))
+        _mesh_box(building, Vector3(0.95, 0.18, 0.24), Vector3(0, 0.16, 0), Color("76502d"))
+        _mesh_box(building, Vector3(0.24, 0.18, 0.95), Vector3(0, 0.18, 0), Color("76502d"))
+        _mesh_sphere(building, 0.42, Vector3(0, 0.53, 0), Color("ee7c25"), Vector3(0.65, 1.2, 0.65))
+    else:
+        for x in [-1.55, 1.55]:
+            for z in [-1.3, 1.3]:
+                _mesh_box(building, Vector3(0.24, 2.45, 0.24), Vector3(x, 1.23, z), Color("735136"))
+        _mesh_box(building, Vector3(3.65, 0.25, 3.25), Vector3(0, 2.55, 0), Color("6a5236"))
+        _mesh_box(building, Vector3(3.2, 0.18, 2.8), Vector3(0, 0.13, 0), Color("97744b"))
+    built_structures.append({"kind": kind, "pos": chosen, "radius": build_radius, "node": building})
+    obstacles.append({"pos": chosen, "radius": build_radius, "node": building})
+    var names := {"storage": "Ящик для припасов", "firepit": "Малый костёр", "shelter": "Деревянный навес"}
+    status_message = "%s построен рядом с тобой!" % names[kind]
+    _update_ui()
+
 
 func _toggle_craft() -> void:
     craft_panel.visible = not craft_panel.visible
@@ -1491,6 +1575,14 @@ func _update_ui() -> void:
     if shovel_recipe_button != null:
         shovel_recipe_button.text = "Лопата готова" if has_shovel else "Создать лопату\n3 дерева + 2 железа"
         shovel_recipe_button.disabled = has_shovel or inventory["wood"] < 3 or inventory["iron"] < 2
+    if not build_buttons.is_empty():
+        var build_names := {"storage": "Ящик для припасов", "firepit": "Малый костёр", "shelter": "Деревянный навес"}
+        var build_costs := {"storage": [6, 2], "firepit": [3, 5], "shelter": [12, 6]}
+        for build_kind in build_buttons.keys():
+            var build_button: Button = build_buttons[build_kind]
+            var cost: Array = build_costs[build_kind]
+            build_button.text = "%s\\n%d древесины + %d камней" % [build_names[build_kind], cost[0], cost[1]]
+            build_button.disabled = inventory["wood"] < cost[0] or inventory["stone"] < cost[1]
     if pickaxe_recipe_button != null:
         pickaxe_recipe_button.text = "Кирка уже создана" if has_pickaxe else "Создать кирку\n3 дерева + 2 камня"
         pickaxe_recipe_button.disabled = has_pickaxe or inventory["wood"] < 3 or inventory["stone"] < 2
