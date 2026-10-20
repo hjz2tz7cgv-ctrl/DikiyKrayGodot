@@ -1141,7 +1141,7 @@ func _create_ui() -> void:
     craft_title.add_theme_font_size_override("font_size", 24)
     craft_layout.add_child(craft_title)
     var craft_description := Label.new()
-    craft_description.text = "СНАЧАЛА СТРОИТЕЛЬСТВО, НИЖЕ — ИНСТРУМЕНТЫ"
+    craft_description.text = "ОБНОВЛЕНИЕ: СУНДУК ОТКРЫВАЕТСЯ РЯДОМ, ПОВОРОТ ◀ ▶ ПРИ УСТАНОВКЕ"
     craft_description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     craft_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     craft_description.add_theme_font_size_override("font_size", 15)
@@ -1162,7 +1162,7 @@ func _create_ui() -> void:
     craft_recipe_button = Button.new()
     craft_recipe_button.pressed.connect(_craft_spear)
     var build_heading := Label.new()
-    build_heading.text = "ПОСТРОИТЬ РЯДОМ С СОБОЙ: выбери объект ниже"
+    build_heading.text = "СТРОИТЕЛЬСТВО: выбери объект, затем место и поворот"
     build_heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     build_heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     craft_col.add_child(build_heading)
@@ -1490,9 +1490,10 @@ func _create_build_placement_ui(root: Control) -> void:
     controls.set_anchors_preset(Control.PRESET_CENTER_TOP)
     controls.offset_left = -205.0
     controls.offset_right = 205.0
-    controls.offset_top = 80.0
-    controls.offset_bottom = 232.0
+    controls.offset_top = 85.0
+    controls.offset_bottom = 250.0
     root.add_child(controls)
+    controls.mouse_filter = Control.MOUSE_FILTER_PASS
     build_tip = Label.new()
     build_tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     build_tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1516,13 +1517,13 @@ func _create_build_placement_ui(root: Control) -> void:
     rotate_actions.alignment = BoxContainer.ALIGNMENT_CENTER
     controls.add_child(rotate_actions)
     var rotate_left := Button.new()
-    rotate_left.text = "↶ ВЛЕВО"
+    rotate_left.text = "◀ ПОВЕРНУТЬ"
     rotate_left.custom_minimum_size = Vector2(145, 48)
     rotate_left.focus_mode = Control.FOCUS_NONE
     rotate_left.pressed.connect(_rotate_build.bind(-1))
     rotate_actions.add_child(rotate_left)
     var rotate_right := Button.new()
-    rotate_right.text = "ВПРАВО ↷"
+    rotate_right.text = "ПОВЕРНУТЬ ▶"
     rotate_right.custom_minimum_size = Vector2(145, 48)
     rotate_right.focus_mode = Control.FOCUS_NONE
     rotate_right.pressed.connect(_rotate_build.bind(1))
@@ -1533,7 +1534,7 @@ func _create_build_placement_ui(root: Control) -> void:
 func _rotate_build(direction: int) -> void:
     if selected_build_kind.is_empty():
         return
-    build_rotation_target += float(direction) * PI / 4.0
+    build_rotation_target = wrapf(build_rotation_target + float(direction) * PI / 4.0, 0.0, TAU)
     if build_tip != null:
         build_tip.text = "Поворот: %d° — выбери место и нажми ПОСТРОИТЬ" % posmod(int(round(rad_to_deg(build_rotation_target))), 360)
 
@@ -1558,9 +1559,11 @@ func _start_build_placement(kind: String) -> void:
     if modal_shield != null:
         modal_shield.visible = false
     var controls: Control = build_confirm_button.get_meta("placement_controls")
+    # На мобильном HUD панель строительства должна быть поверх остальных кнопок.
+    controls.get_parent().move_child(controls, -1)
     controls.visible = true
     build_confirm_button.disabled = true
-    build_tip.text = "Нажми на свободную землю, затем ПОСТРОИТЬ"
+    build_tip.text = "Веди пальцем по земле. ◀ ▶ поворачивают на 45°"
     build_preview = Node3D.new()
     build_preview_has_target = false
     add_child(build_preview)
