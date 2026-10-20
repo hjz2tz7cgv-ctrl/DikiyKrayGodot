@@ -1135,6 +1135,12 @@ func _create_ui() -> void:
         recipe_button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
         recipe_button.add_theme_font_size_override("font_size", 17)
         recipe_button.focus_mode = Control.FOCUS_NONE
+    # Временная кнопка для быстрой проверки строительства на телефоне.
+    var test_resources_button := Button.new()
+    test_resources_button.text = "ТЕСТ: +100 каждого ресурса"
+    test_resources_button.custom_minimum_size.y = 58
+    test_resources_button.pressed.connect(_give_test_resources)
+    craft_layout.add_child(test_resources_button)
     var craft_close := Button.new()
     craft_close.text = "Закрыть"
     craft_close.custom_minimum_size.y = 48
@@ -1275,6 +1281,13 @@ func _craft_iron_tool() -> void:
     else:
         status_message = "Нужно 2 железа и 2 дерева"
     _update_ui()
+
+func _give_test_resources() -> void:
+    for resource_kind in inventory.keys():
+        inventory[resource_kind] += 100
+    status_message = "Тест: +100 каждого предмета и ресурса"
+    _update_ui()
+
 
 func _build_structure(kind: String) -> void:
     # Первое строительство: готовая постройка появляется на свободной суше
