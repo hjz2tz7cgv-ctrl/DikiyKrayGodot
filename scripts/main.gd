@@ -52,6 +52,12 @@ var has_shovel := false
 var shovel_recipe_button: Button
 var build_buttons: Dictionary = {}
 var built_structures: Array[Dictionary] = []
+var selected_build_kind := ""
+var build_preview: Node3D
+var build_preview_valid := false
+var build_confirm_button: Button
+var build_cancel_button: Button
+var build_tip: Label
 var storage_selection: OptionButton
 var storage_status: Label
 var storage_contents: Dictionary = {}
@@ -974,6 +980,9 @@ func _create_ui() -> void:
     bag_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
     bag_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     bag_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    bag_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+    bag_scroll.scroll_deadzone = 4
+    bag_scroll.follow_focus = false
     bag_scroll.mouse_filter = Control.MOUSE_FILTER_STOP
     bag_col.add_child(bag_scroll)
     var sections := VBoxContainer.new()
@@ -1047,6 +1056,7 @@ func _create_ui() -> void:
     _refresh_quickbar()
     _create_minimap(root)
     _create_map_side_buttons(root)
+    _create_build_placement_ui(root)
     action_menu = PanelContainer.new()
     root.add_child(action_menu)
     action_menu.set_anchors_preset(Control.PRESET_CENTER)
@@ -1086,7 +1096,7 @@ func _create_ui() -> void:
     craft_title.add_theme_font_size_override("font_size", 24)
     craft_layout.add_child(craft_title)
     var craft_description := Label.new()
-    craft_description.text = "Инструменты и лечебные предметы"
+    craft_description.text = "СНАЧАЛА СТРОИТЕЛЬСТВО, НИЖЕ — ИНСТРУМЕНТЫ"
     craft_description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     craft_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     craft_description.add_theme_font_size_override("font_size", 15)
@@ -1094,6 +1104,8 @@ func _create_ui() -> void:
     var craft_scroll := ScrollContainer.new()
     craft_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
     craft_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+    craft_scroll.scroll_deadzone = 4
+    craft_scroll.follow_focus = false
     craft_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     craft_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
     craft_layout.add_child(craft_scroll)
@@ -1103,6 +1115,20 @@ func _create_ui() -> void:
     craft_scroll.add_child(craft_col)
     craft_recipe_button = Button.new()
     craft_recipe_button.pressed.connect(_craft_spear)
+    var build_heading := Label.new()
+    build_heading.text = "ПОСТРОИТЬ РЯДОМ С СОБОЙ: выбери объект ниже"
+    build_heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    build_heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    craft_col.add_child(build_heading)
+    for build_kind in ["storage", "firepit", "shelter"]:
+        var build_button := Button.new()
+        build_button.custom_minimum_size.y = 66
+        build_button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        build_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        build_button.focus_mode = Control.FOCUS_NONE
+        build_button.pressed.connect(_start_build_placement.bind(build_kind))
+        craft_col.add_child(build_button)
+        build_buttons[build_kind] = build_button
     craft_col.add_child(craft_recipe_button)
     pickaxe_recipe_button = Button.new()
     pickaxe_recipe_button.pressed.connect(_craft_pickaxe)
@@ -1119,20 +1145,6 @@ func _create_ui() -> void:
     shovel_recipe_button = Button.new()
     shovel_recipe_button.pressed.connect(_craft_shovel)
     craft_col.add_child(shovel_recipe_button)
-    var build_heading := Label.new()
-    build_heading.text = "СТРОИТЕЛЬСТВО — рядом с персонажем"
-    build_heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    build_heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    craft_col.add_child(build_heading)
-    for build_kind in ["storage", "firepit", "shelter"]:
-        var build_button := Button.new()
-        build_button.custom_minimum_size.y = 66
-        build_button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-        build_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        build_button.focus_mode = Control.FOCUS_NONE
-        build_button.pressed.connect(_build_structure.bind(build_kind))
-        craft_col.add_child(build_button)
-        build_buttons[build_kind] = build_button
     for recipe_button in [craft_recipe_button, pickaxe_recipe_button, iron_recipe_button, bandage_recipe_button, tea_recipe_button, shovel_recipe_button]:
         recipe_button.custom_minimum_size.y = 66
         recipe_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1164,12 +1176,6 @@ func _create_ui() -> void:
     withdraw_button.text = "Забрать из ящика: 10 шт."
     withdraw_button.pressed.connect(_transfer_storage.bind(false))
     craft_col.add_child(withdraw_button)
-    var cook_button := Button.new()
-    cook_button.text = "Приготовить мясо на построенном костре (1 мясо + 1 дерево)"
-    cook_button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    cook_button.custom_minimum_size.y = 58
-    cook_button.pressed.connect(_cook_at_built_fire)
-    craft_col.add_child(cook_button)
     test_resources_button.pressed.connect(_give_test_resources)
     craft_layout.add_child(test_resources_button)
     var craft_close := Button.new()
@@ -1376,46 +1382,132 @@ func _cook_at_built_fire() -> void:
         status_message = "Мясо готовится 11 секунд"
     _update_ui()
 
-func _build_structure(kind: String) -> void:
-    # Первое строительство: готовая постройка появляется на свободной суше
-    # рядом с игроком. Вода, другие постройки и деревья запрещены.
+func _create_build_placement_ui(root: Control) -> void:
+    # Панель поверх игрового мира: выбрать место, подтвердить или отменить.
+    var controls := VBoxContainer.new()
+    controls.set_anchors_preset(Control.PRESET_CENTER_TOP)
+    controls.offset_left = -205.0
+    controls.offset_right = 205.0
+    controls.offset_top = 80.0
+    controls.offset_bottom = 176.0
+    root.add_child(controls)
+    build_tip = Label.new()
+    build_tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    build_tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    build_tip.add_theme_color_override("font_color", Color("fff1b3"))
+    build_tip.text = "Нажми на землю, чтобы выбрать место"
+    controls.add_child(build_tip)
+    var actions := HBoxContainer.new()
+    actions.alignment = BoxContainer.ALIGNMENT_CENTER
+    controls.add_child(actions)
+    build_confirm_button = Button.new()
+    build_confirm_button.text = "ПОСТРОИТЬ"
+    build_confirm_button.custom_minimum_size = Vector2(155, 54)
+    build_confirm_button.pressed.connect(_confirm_build_placement)
+    actions.add_child(build_confirm_button)
+    build_cancel_button = Button.new()
+    build_cancel_button.text = "ОТМЕНА"
+    build_cancel_button.custom_minimum_size = Vector2(125, 54)
+    build_cancel_button.pressed.connect(_cancel_build_placement)
+    actions.add_child(build_cancel_button)
+    controls.visible = false
+    build_confirm_button.set_meta("placement_controls", controls)
+
+func _build_radius(kind: String) -> float:
+    return 1.6 if kind == "shelter" else 1.0
+
+func _start_build_placement(kind: String) -> void:
     var costs := {"storage": Vector2i(6, 2), "firepit": Vector2i(3, 5), "shelter": Vector2i(12, 6)}
     if not costs.has(kind):
         return
     var cost: Vector2i = costs[kind]
     if inventory["wood"] < cost.x or inventory["stone"] < cost.y:
-        status_message = "Недостаточно древесины или камней"
+        status_message = "Недостаточно материалов"
         _update_ui()
         return
-    var origin := Vector2(player.global_position.x, player.global_position.z)
-    var build_radius := 1.6 if kind == "shelter" else 1.0
-    var chosen := Vector2.ZERO
-    var valid := false
-    for distance: float in [5.0, 7.0, 9.0]:
-        for step in range(12):
-            var angle := float(step) * TAU / 12.0
-            var candidate: Vector2 = origin + Vector2(cos(angle), sin(angle)) * distance
-            if absf(candidate.x) > WORLD_LIMIT - 5.0 or absf(candidate.y) > WORLD_LIMIT - 5.0:
-                continue
-            if not _can_place(candidate, build_radius + 1.2):
-                continue
-            var free := true
-            for building in built_structures:
-                if candidate.distance_to(building["pos"]) < build_radius + float(building["radius"]) + 2.0:
-                    free = false
-                    break
-            if free:
-                chosen = candidate
-                valid = true
-                break
-        if valid:
-            break
-    if not valid:
-        status_message = "Нет свободного места рядом. Отойди от воды и деревьев"
+    _cancel_build_placement()
+    selected_build_kind = kind
+    craft_panel.visible = false
+    _release_gameplay_touches()
+    if modal_shield != null:
+        modal_shield.visible = false
+    var controls: Control = build_confirm_button.get_meta("placement_controls")
+    controls.visible = true
+    build_confirm_button.disabled = true
+    build_tip.text = "Нажми на свободную землю, затем ПОСТРОИТЬ"
+    build_preview = Node3D.new()
+    add_child(build_preview)
+    var radius: float = _build_radius(kind)
+    var marker := MeshInstance3D.new()
+    var marker_mesh := CylinderMesh.new()
+    marker_mesh.top_radius = radius
+    marker_mesh.bottom_radius = radius
+    marker_mesh.height = 0.08
+    marker_mesh.radial_segments = 8
+    marker.mesh = marker_mesh
+    marker.position.y = 0.08
+    var mat := StandardMaterial3D.new()
+    mat.albedo_color = Color(0.25, 0.95, 0.35, 0.65)
+    mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    marker.material_override = mat
+    build_preview.add_child(marker)
+    build_preview.visible = false
+    _update_ui()
+
+func _choose_build_position(screen: Vector2) -> void:
+    if selected_build_kind.is_empty() or camera == null:
+        return
+    var origin: Vector3 = camera.project_ray_origin(screen)
+    var direction: Vector3 = camera.project_ray_normal(screen)
+    if absf(direction.y) < 0.001:
+        return
+    var point: Vector3 = origin + direction * (-origin.y / direction.y)
+    var chosen := Vector2(point.x, point.z)
+    var radius: float = _build_radius(selected_build_kind)
+    var hero := Vector2(player.global_position.x, player.global_position.z)
+    build_preview_valid = chosen.distance_to(hero) <= 15.0 and chosen.distance_to(hero) >= 2.5 and absf(chosen.x) < WORLD_LIMIT - 5.0 and absf(chosen.y) < WORLD_LIMIT - 5.0 and _can_place(chosen, radius + 0.5)
+    for building in built_structures:
+        if chosen.distance_to(building["pos"]) < radius + float(building["radius"]) + 1.0:
+            build_preview_valid = false
+    build_preview.position = Vector3(chosen.x, 0, chosen.y)
+    build_preview.visible = true
+    var marker: MeshInstance3D = build_preview.get_child(0)
+    var material: StandardMaterial3D = marker.material_override
+    material.albedo_color = Color(0.25, 0.95, 0.35, 0.65) if build_preview_valid else Color(1.0, 0.25, 0.2, 0.65)
+    build_confirm_button.disabled = not build_preview_valid
+    build_tip.text = "Зелёный — можно строить" if build_preview_valid else "Красный — выбери другое место (до 15 м)"
+
+func _cancel_build_placement() -> void:
+    selected_build_kind = ""
+    build_preview_valid = false
+    if build_preview != null:
+        build_preview.queue_free()
+        build_preview = null
+    if build_confirm_button != null:
+        build_confirm_button.disabled = true
+        var controls: Control = build_confirm_button.get_meta("placement_controls")
+        controls.visible = false
+
+func _confirm_build_placement() -> void:
+    if selected_build_kind.is_empty() or not build_preview_valid or build_preview == null:
+        return
+    var kind := selected_build_kind
+    var chosen := Vector2(build_preview.position.x, build_preview.position.z)
+    var radius: float = _build_radius(kind)
+    if not _can_place(chosen, radius + 0.5):
+        build_confirm_button.disabled = true
+        build_tip.text = "Место занято. Выбери другое"
+        return
+    var costs := {"storage": Vector2i(6, 2), "firepit": Vector2i(3, 5), "shelter": Vector2i(12, 6)}
+    var cost: Vector2i = costs[kind]
+    if inventory["wood"] < cost.x or inventory["stone"] < cost.y:
+        _cancel_build_placement()
+        status_message = "Недостаточно материалов"
         _update_ui()
         return
     inventory["wood"] -= cost.x
     inventory["stone"] -= cost.y
+    var build_radius: float = radius
     var building := Node3D.new()
     building.position = Vector3(chosen.x, 0, chosen.y)
     add_child(building)
@@ -1440,11 +1532,14 @@ func _build_structure(kind: String) -> void:
     built_structures.append({"kind": kind, "pos": chosen, "radius": build_radius, "node": building})
     obstacles.append({"pos": chosen, "radius": build_radius, "node": building})
     var names := {"storage": "Ящик для припасов", "firepit": "Малый костёр", "shelter": "Деревянный навес"}
-    status_message = "%s построен рядом с тобой!" % names[kind]
+    status_message = "%s построен в выбранном месте!" % names[kind]
+    _cancel_build_placement()
     _update_ui()
 
 
 func _toggle_craft() -> void:
+    if not selected_build_kind.is_empty():
+        _cancel_build_placement()
     craft_panel.visible = not craft_panel.visible
     if craft_panel.visible:
         _release_gameplay_touches()
@@ -1594,6 +1689,8 @@ func _add_bag_section(parent: VBoxContainer, heading: String, items: Array) -> v
         bag_item_counts[str(item[0])] = quantity
 
 func _toggle_bag() -> void:
+    if not selected_build_kind.is_empty():
+        _cancel_build_placement()
     bag_panel.visible = not bag_panel.visible
     if bag_panel.visible:
         _release_gameplay_touches()
@@ -2348,6 +2445,15 @@ func _input(event: InputEvent) -> void:
     if _interface_modal_open():
         _release_gameplay_touches()
         return
+    if not selected_build_kind.is_empty():
+        if event is InputEventScreenTouch and not event.pressed:
+            var controls: Control = build_confirm_button.get_meta("placement_controls")
+            if not controls.get_global_rect().has_point(event.position):
+                _choose_build_position(event.position)
+            get_viewport().set_input_as_handled()
+        elif event is InputEventScreenDrag:
+            get_viewport().set_input_as_handled()
+        return
     if event is InputEventScreenTouch:
         if event.pressed:
             # Сначала перехватываем нажатие на кнопку, ДО джойстика и камеры.
@@ -2424,6 +2530,12 @@ func _input(event: InputEvent) -> void:
         active_touches[event.index] = event.position
 
 func _unhandled_input(event: InputEvent) -> void:
+    if not selected_build_kind.is_empty():
+        if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+            var controls: Control = build_confirm_button.get_meta("placement_controls")
+            if not controls.get_global_rect().has_point(event.position):
+                _choose_build_position(event.position)
+        return
     if _interface_modal_open():
         return
     if event is InputEventMouseButton and event.pressed:
