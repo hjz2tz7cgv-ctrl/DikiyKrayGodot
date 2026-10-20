@@ -1403,32 +1403,50 @@ func _refresh_storage_status() -> void:
         return
     if opened_storage_index < 0 or opened_storage_index >= built_structures.size():
         return
+    var old_scroll: int = storage_scroll_control.scroll_vertical
     for child in storage_list.get_children():
         storage_list.remove_child(child)
         child.queue_free()
     var building: Dictionary = built_structures[opened_storage_index]
     var stored: Dictionary = building.get("contents", {})
+    var grid := GridContainer.new()
+    grid.columns = 3
+    grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    grid.add_theme_constant_override("h_separation", 6)
+    grid.add_theme_constant_override("v_separation", 7)
+    storage_list.add_child(grid)
     for resource_key in inventory.keys():
         var kind: String = str(resource_key)
-        var row := HBoxContainer.new()
-        storage_list.add_child(row)
-        var label := Label.new()
-        label.text = "%s\nРюкзак: %d | Сундук: %d" % [_item_ru_name(kind), int(inventory.get(kind, 0)), int(stored.get(kind, 0))]
-        label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        label.custom_minimum_size.y = 54
-        row.add_child(label)
+        var card := PanelContainer.new()
+        card.custom_minimum_size = Vector2(115, 112)
+        card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        grid.add_child(card)
+        var column := VBoxContainer.new()
+        card.add_child(column)
+        var item_name := Label.new()
+        item_name.text = _item_ru_name(kind)
+        item_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+        item_name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        column.add_child(item_name)
+        var counts := Label.new()
+        counts.text = "Р:%d  С:%d" % [int(inventory.get(kind, 0)), int(stored.get(kind, 0))]
+        counts.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+        column.add_child(counts)
+        var buttons := HBoxContainer.new()
+        buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+        column.add_child(buttons)
         var deposit := Button.new()
-        deposit.text = "+10"
-        deposit.tooltip_text = "Положить до 10"
+        deposit.text = "+1"
+        deposit.custom_minimum_size = Vector2(42, 38)
         deposit.disabled = int(inventory.get(kind, 0)) <= 0
         deposit.pressed.connect(_transfer_storage.bind(kind, true, false))
-        row.add_child(deposit)
+        buttons.add_child(deposit)
         var withdraw := Button.new()
-        withdraw.text = "−10"
-        withdraw.tooltip_text = "Забрать до 10"
+        withdraw.text = "-1"
+        withdraw.custom_minimum_size = Vector2(42, 38)
         withdraw.disabled = int(stored.get(kind, 0)) <= 0
         withdraw.pressed.connect(_transfer_storage.bind(kind, false, false))
-        row.add_child(withdraw)
+        buttons.add_child(withdraw)
     var all_row := HBoxContainer.new()
     storage_list.add_child(all_row)
     var deposit_all := Button.new()
@@ -1441,6 +1459,7 @@ func _refresh_storage_status() -> void:
     take_all.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     take_all.pressed.connect(_transfer_storage.bind("", false, true))
     all_row.add_child(take_all)
+    storage_scroll_control.set_deferred("scroll_vertical", old_scroll)
 
 func _transfer_storage(kind: String, deposit: bool, all_items: bool) -> void:
     if opened_storage_index < 0 or _nearest_storage_index() != opened_storage_index:
@@ -1454,7 +1473,7 @@ func _transfer_storage(kind: String, deposit: bool, all_items: bool) -> void:
     for resource_key in keys:
         var key: String = str(resource_key)
         var available: int = int(inventory.get(key, 0)) if deposit else int(stored.get(key, 0))
-        var amount: int = available if all_items else mini(10, available)
+        var amount: int = available if all_items else mini(1, available)
         if amount <= 0:
             continue
         if deposit:
@@ -1468,6 +1487,7 @@ func _transfer_storage(kind: String, deposit: bool, all_items: bool) -> void:
     built_structures[opened_storage_index] = building
     status_message = "%s: %d предметов" % ["Положено" if deposit else "Забрано", total]
     _update_ui()
+    _refresh_storage_status()
 
 func _cook_at_built_fire() -> void:
     if not _near_built_structure("firepit"):
@@ -1904,7 +1924,6 @@ func _update_ui() -> void:
             bag_note_label.visible = cabin_note_found
     if modal_shield != null:
         modal_shield.visible = _interface_modal_open()
-    _refresh_storage_status()
     if quickbar != null:
         _refresh_quickbar()
     _update_minimap()
