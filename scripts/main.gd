@@ -55,6 +55,13 @@ var built_structures: Array[Dictionary] = []
 var selected_build_kind := ""
 var build_preview: Node3D
 var build_preview_valid := false
+var build_preview_target := Vector3.ZERO
+var build_preview_has_target := false
+var bag_scroll_control: ScrollContainer
+var craft_scroll_control: ScrollContainer
+var modal_drag_finger := -1
+var modal_drag_scroll: ScrollContainer
+var modal_drag_last_y := 0.0
 var build_confirm_button: Button
 var build_cancel_button: Button
 var build_tip: Label
@@ -988,6 +995,7 @@ func _create_ui() -> void:
     var sections := VBoxContainer.new()
     sections.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     sections.add_theme_constant_override("separation", 12)
+    bag_scroll_control = bag_scroll
     bag_scroll.add_child(sections)
     _add_bag_section(sections, "МАТЕРИАЛЫ", [
         ["wood", "Дерево", "🪵"], ["stone", "Камень", "🪨"],
@@ -1112,6 +1120,7 @@ func _create_ui() -> void:
     var craft_col := VBoxContainer.new()
     craft_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     craft_col.add_theme_constant_override("separation", 6)
+    craft_scroll_control = craft_scroll
     craft_scroll.add_child(craft_col)
     craft_recipe_button = Button.new()
     craft_recipe_button.pressed.connect(_craft_spear)
@@ -1320,8 +1329,9 @@ func _craft_iron_tool() -> void:
     _update_ui()
 
 func _give_test_resources() -> void:
+    # Словарь inventory — единый источник ресурсов. Новые ключи тоже получают +100.
     for resource_kind in inventory.keys():
-        inventory[resource_kind] += 100
+        inventory[resource_kind] = int(inventory[resource_kind]) + 100
     status_message = "Тест: +100 каждого предмета и ресурса"
     _update_ui()
 
@@ -1436,6 +1446,7 @@ func _start_build_placement(kind: String) -> void:
     build_confirm_button.disabled = true
     build_tip.text = "Нажми на свободную землю, затем ПОСТРОИТЬ"
     build_preview = Node3D.new()
+    build_preview_has_target = false
     add_child(build_preview)
     var radius: float = _build_radius(kind)
     var marker := MeshInstance3D.new()
@@ -1469,7 +1480,10 @@ func _choose_build_position(screen: Vector2) -> void:
     for building in built_structures:
         if chosen.distance_to(building["pos"]) < radius + float(building["radius"]) + 1.0:
             build_preview_valid = false
-    build_preview.position = Vector3(chosen.x, 0, chosen.y)
+    build_preview_target = Vector3(chosen.x, 0, chosen.y)
+    if not build_preview_has_target:
+        build_preview.position = build_preview_target
+        build_preview_has_target = true
     build_preview.visible = true
     var marker: MeshInstance3D = build_preview.get_child(0)
     var material: StandardMaterial3D = marker.material_override
@@ -1480,6 +1494,7 @@ func _choose_build_position(screen: Vector2) -> void:
 func _cancel_build_placement() -> void:
     selected_build_kind = ""
     build_preview_valid = false
+    build_preview_has_target = false
     if build_preview != null:
         build_preview.queue_free()
         build_preview = null
@@ -1492,7 +1507,7 @@ func _confirm_build_placement() -> void:
     if selected_build_kind.is_empty() or not build_preview_valid or build_preview == null:
         return
     var kind := selected_build_kind
-    var chosen := Vector2(build_preview.position.x, build_preview.position.z)
+    var chosen := Vector2(build_preview_target.x, build_preview_target.z)
     var radius: float = _build_radius(kind)
     if not _can_place(chosen, radius + 0.5):
         build_confirm_button.disabled = true
@@ -2253,6 +2268,9 @@ func _blocked(pos: Vector2, radius: float) -> bool:
     return false
 
 func _physics_process(delta: float) -> void:
+    if build_preview != null and build_preview_has_target:
+        # Независимая от FPS плавная интерполяция маркера к точке пальца.
+        build_preview.position = build_preview.position.lerp(build_preview_target, 1.0 - exp(-14.0 * delta))
     if poison_time > 0.0:
         poison_time = maxf(0.0, poison_time - delta)
         hunger = maxf(0.0, hunger - delta * 0.055)
@@ -2444,6 +2462,30 @@ func _input(event: InputEvent) -> void:
     # Открытое окно получает все касания; мир, камера и джойстик заблокированы.
     if _interface_modal_open():
         _release_gameplay_touches()
+        # В Web/iOS прокручиваем содержимое сами по движению пальца.
+        # Это работает даже когда палец начинается поверх карточки или кнопки.
+        var current_scroll: ScrollContainer = null
+        if bag_panel != null and bag_panel.visible:
+            current_scroll = bag_scroll_control
+        elif craft_panel != null and craft_panel.visible:
+            current_scroll = craft_scroll_control
+        if event is InputEventScreenTouch:
+            if event.pressed:
+                modal_drag_finger = -1
+                modal_drag_scroll = null
+                if current_scroll != null and current_scroll.get_global_rect().has_point(event.position):
+                    modal_drag_finger = event.index
+                    modal_drag_scroll = current_scroll
+                    modal_drag_last_y = event.position.y
+            elif event.index == modal_drag_finger:
+                modal_drag_finger = -1
+                modal_drag_scroll = null
+        elif event is InputEventScreenDrag and event.index == modal_drag_finger and modal_drag_scroll != null:
+            var delta_y: float = event.position.y - modal_drag_last_y
+            modal_drag_last_y = event.position.y
+            var scroll_max: float = maxf(0.0, modal_drag_scroll.get_v_scroll_bar().max_value - modal_drag_scroll.get_v_scroll_bar().page)
+            modal_drag_scroll.scroll_vertical = int(clampf(float(modal_drag_scroll.scroll_vertical) - delta_y, 0.0, scroll_max))
+            get_viewport().set_input_as_handled()
         return
     if not selected_build_kind.is_empty():
         if event is InputEventScreenTouch and not event.pressed:
@@ -2452,6 +2494,9 @@ func _input(event: InputEvent) -> void:
                 _choose_build_position(event.position)
             get_viewport().set_input_as_handled()
         elif event is InputEventScreenDrag:
+            var controls: Control = build_confirm_button.get_meta("placement_controls")
+            if not controls.get_global_rect().has_point(event.position):
+                _choose_build_position(event.position)
             get_viewport().set_input_as_handled()
         return
     if event is InputEventScreenTouch:
