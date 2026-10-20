@@ -1304,10 +1304,10 @@ func _build_structure(kind: String) -> void:
     var build_radius := 1.6 if kind == "shelter" else 1.0
     var chosen := Vector2.ZERO
     var valid := false
-    for distance in [5.0, 7.0, 9.0]:
+    for distance: float in [5.0, 7.0, 9.0]:
         for step in range(12):
             var angle := float(step) * TAU / 12.0
-            var candidate := origin + Vector2(cos(angle), sin(angle)) * distance
+            var candidate: Vector2 = origin + Vector2(cos(angle), sin(angle)) * distance
             if absf(candidate.x) > WORLD_LIMIT - 5.0 or absf(candidate.y) > WORLD_LIMIT - 5.0:
                 continue
             if not _can_place(candidate, build_radius + 1.2):
