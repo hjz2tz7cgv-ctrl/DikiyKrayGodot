@@ -57,6 +57,8 @@ var build_preview: Node3D
 var build_preview_valid := false
 var build_preview_target := Vector3.ZERO
 var build_preview_has_target := false
+var build_rotation_target := 0.0
+var build_rotation_current := 0.0
 var bag_scroll_control: ScrollContainer
 var craft_scroll_control: ScrollContainer
 var modal_drag_finger := -1
@@ -65,6 +67,10 @@ var modal_drag_last_y := 0.0
 var build_confirm_button: Button
 var build_cancel_button: Button
 var build_tip: Label
+var storage_panel: PanelContainer
+var storage_list: VBoxContainer
+var storage_scroll_control: ScrollContainer
+var opened_storage_index := -1
 var storage_selection: OptionButton
 var storage_status: Label
 var storage_contents: Dictionary = {}
@@ -1076,6 +1082,37 @@ func _create_ui() -> void:
     action_list = VBoxContainer.new()
     action_list.add_theme_constant_override("separation", 5)
     action_menu.add_child(action_list)
+    # Отдельное окно сундука: появляется только при взаимодействии рядом.
+    storage_panel = PanelContainer.new()
+    root.add_child(storage_panel)
+    storage_panel.set_anchors_preset(Control.PRESET_CENTER)
+    storage_panel.offset_left = -minf(280.0, get_viewport().get_visible_rect().size.x * 0.46)
+    storage_panel.offset_right = -storage_panel.offset_left
+    storage_panel.offset_top = -minf(275.0, get_viewport().get_visible_rect().size.y * 0.44)
+    storage_panel.offset_bottom = -storage_panel.offset_top
+    storage_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+    storage_panel.visible = false
+    var storage_layout := VBoxContainer.new()
+    storage_panel.add_child(storage_layout)
+    var storage_header := Label.new()
+    storage_header.text = "СУНДУК — ХРАНИЛИЩЕ"
+    storage_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    storage_layout.add_child(storage_header)
+    var storage_scroll := ScrollContainer.new()
+    storage_scroll_control = storage_scroll
+    storage_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    storage_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    storage_scroll.follow_focus = true
+    storage_layout.add_child(storage_scroll)
+    storage_list = VBoxContainer.new()
+    storage_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    storage_scroll.add_child(storage_list)
+    var storage_close := Button.new()
+    storage_close.text = "Закрыть сундук"
+    storage_close.custom_minimum_size.y = 50
+    storage_close.pressed.connect(_close_storage)
+    storage_layout.add_child(storage_close)
+
     var close := Button.new()
     close.text = "Закрыть"
     close.pressed.connect(_toggle_bag)
@@ -1164,27 +1201,6 @@ func _create_ui() -> void:
     var test_resources_button := Button.new()
     test_resources_button.text = "ТЕСТ: +100 каждого ресурса"
     test_resources_button.custom_minimum_size.y = 58
-    var storage_title := Label.new()
-    storage_title.text = "СКЛАД — подойди к построенному ящику"
-    storage_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    craft_col.add_child(storage_title)
-    storage_selection = OptionButton.new()
-    for resource_key in inventory.keys():
-        storage_resource_keys.append(str(resource_key))
-        storage_selection.add_item(_item_ru_name(str(resource_key)))
-    storage_selection.item_selected.connect(_refresh_storage_status.unbind(1))
-    craft_col.add_child(storage_selection)
-    storage_status = Label.new()
-    storage_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    craft_col.add_child(storage_status)
-    var deposit_button := Button.new()
-    deposit_button.text = "Положить в ящик: 10 шт."
-    deposit_button.pressed.connect(_transfer_storage.bind(true))
-    craft_col.add_child(deposit_button)
-    var withdraw_button := Button.new()
-    withdraw_button.text = "Забрать из ящика: 10 шт."
-    withdraw_button.pressed.connect(_transfer_storage.bind(false))
-    craft_col.add_child(withdraw_button)
     test_resources_button.pressed.connect(_give_test_resources)
     craft_layout.add_child(test_resources_button)
     var craft_close := Button.new()
@@ -1347,34 +1363,110 @@ func _near_built_structure(kind: String, distance: float = 4.0) -> bool:
             return true
     return false
 
-func _refresh_storage_status() -> void:
-    if storage_selection == null or storage_status == null:
-        return
-    var selected := storage_selection.selected
-    if selected < 0 or selected >= storage_resource_keys.size():
-        return
-    var kind: String = storage_resource_keys[selected]
-    storage_status.text = "%s: в рюкзаке %d | в ящике %d" % [_item_ru_name(kind), int(inventory.get(kind, 0)), int(storage_contents.get(kind, 0))]
+func _nearest_storage_index(distance: float = 3.7) -> int:
+    var here := Vector2(player.global_position.x, player.global_position.z)
+    var nearest := -1
+    var best := distance
+    for i in range(built_structures.size()):
+        var building: Dictionary = built_structures[i]
+        if building["kind"] != "storage":
+            continue
+        var d: float = here.distance_to(building["pos"])
+        if d <= best:
+            best = d
+            nearest = i
+    return nearest
 
-func _transfer_storage(deposit: bool) -> void:
-    if not _near_built_structure("storage"):
-        status_message = "Подойди к построенному ящику (до 4 метров)"
+func _open_storage() -> void:
+    opened_storage_index = _nearest_storage_index()
+    if opened_storage_index < 0:
+        status_message = "Подойди ближе к сундуку"
         _update_ui()
         return
-    if storage_selection.selected < 0:
+    bag_panel.visible = false
+    craft_panel.visible = false
+    action_menu.visible = false
+    storage_panel.visible = true
+    _release_gameplay_touches()
+    _refresh_storage_status()
+    _update_nearby_action()
+    _update_ui()
+
+func _close_storage() -> void:
+    storage_panel.visible = false
+    opened_storage_index = -1
+    _update_nearby_action()
+    _update_ui()
+
+func _refresh_storage_status() -> void:
+    if storage_panel == null or not storage_panel.visible or storage_list == null:
         return
-    var kind: String = storage_resource_keys[storage_selection.selected]
-    var amount := mini(10, int(inventory.get(kind, 0)) if deposit else int(storage_contents.get(kind, 0)))
-    if amount <= 0:
-        status_message = "Нет предметов для перемещения"
-    else:
+    if opened_storage_index < 0 or opened_storage_index >= built_structures.size():
+        return
+    for child in storage_list.get_children():
+        storage_list.remove_child(child)
+        child.queue_free()
+    var building: Dictionary = built_structures[opened_storage_index]
+    var stored: Dictionary = building.get("contents", {})
+    for resource_key in inventory.keys():
+        var kind: String = str(resource_key)
+        var row := HBoxContainer.new()
+        storage_list.add_child(row)
+        var label := Label.new()
+        label.text = "%s\nРюкзак: %d | Сундук: %d" % [_item_ru_name(kind), int(inventory.get(kind, 0)), int(stored.get(kind, 0))]
+        label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        label.custom_minimum_size.y = 54
+        row.add_child(label)
+        var deposit := Button.new()
+        deposit.text = "+10"
+        deposit.tooltip_text = "Положить до 10"
+        deposit.disabled = int(inventory.get(kind, 0)) <= 0
+        deposit.pressed.connect(_transfer_storage.bind(kind, true, false))
+        row.add_child(deposit)
+        var withdraw := Button.new()
+        withdraw.text = "−10"
+        withdraw.tooltip_text = "Забрать до 10"
+        withdraw.disabled = int(stored.get(kind, 0)) <= 0
+        withdraw.pressed.connect(_transfer_storage.bind(kind, false, false))
+        row.add_child(withdraw)
+    var all_row := HBoxContainer.new()
+    storage_list.add_child(all_row)
+    var deposit_all := Button.new()
+    deposit_all.text = "Положить всё"
+    deposit_all.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    deposit_all.pressed.connect(_transfer_storage.bind("", true, true))
+    all_row.add_child(deposit_all)
+    var take_all := Button.new()
+    take_all.text = "Забрать всё"
+    take_all.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    take_all.pressed.connect(_transfer_storage.bind("", false, true))
+    all_row.add_child(take_all)
+
+func _transfer_storage(kind: String, deposit: bool, all_items: bool) -> void:
+    if opened_storage_index < 0 or _nearest_storage_index() != opened_storage_index:
+        status_message = "Нужно стоять рядом с этим сундуком"
+        _close_storage()
+        return
+    var building: Dictionary = built_structures[opened_storage_index]
+    var stored: Dictionary = building.get("contents", {})
+    var keys: Array = inventory.keys() if all_items else [kind]
+    var total := 0
+    for resource_key in keys:
+        var key: String = str(resource_key)
+        var available: int = int(inventory.get(key, 0)) if deposit else int(stored.get(key, 0))
+        var amount: int = available if all_items else mini(10, available)
+        if amount <= 0:
+            continue
         if deposit:
-            inventory[kind] -= amount
-            storage_contents[kind] = int(storage_contents.get(kind, 0)) + amount
+            inventory[key] = int(inventory.get(key, 0)) - amount
+            stored[key] = int(stored.get(key, 0)) + amount
         else:
-            storage_contents[kind] = int(storage_contents.get(kind, 0)) - amount
-            inventory[kind] += amount
-        status_message = "%s: %d × %s" % ["Сложено" if deposit else "Забрано", amount, _item_ru_name(kind)]
+            stored[key] = int(stored.get(key, 0)) - amount
+            inventory[key] = int(inventory.get(key, 0)) + amount
+        total += amount
+    building["contents"] = stored
+    built_structures[opened_storage_index] = building
+    status_message = "%s: %d предметов" % ["Положено" if deposit else "Забрано", total]
     _update_ui()
 
 func _cook_at_built_fire() -> void:
@@ -1399,7 +1491,7 @@ func _create_build_placement_ui(root: Control) -> void:
     controls.offset_left = -205.0
     controls.offset_right = 205.0
     controls.offset_top = 80.0
-    controls.offset_bottom = 176.0
+    controls.offset_bottom = 232.0
     root.add_child(controls)
     build_tip = Label.new()
     build_tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1420,8 +1512,30 @@ func _create_build_placement_ui(root: Control) -> void:
     build_cancel_button.custom_minimum_size = Vector2(125, 54)
     build_cancel_button.pressed.connect(_cancel_build_placement)
     actions.add_child(build_cancel_button)
+    var rotate_actions := HBoxContainer.new()
+    rotate_actions.alignment = BoxContainer.ALIGNMENT_CENTER
+    controls.add_child(rotate_actions)
+    var rotate_left := Button.new()
+    rotate_left.text = "↶ ВЛЕВО"
+    rotate_left.custom_minimum_size = Vector2(145, 48)
+    rotate_left.focus_mode = Control.FOCUS_NONE
+    rotate_left.pressed.connect(_rotate_build.bind(-1))
+    rotate_actions.add_child(rotate_left)
+    var rotate_right := Button.new()
+    rotate_right.text = "ВПРАВО ↷"
+    rotate_right.custom_minimum_size = Vector2(145, 48)
+    rotate_right.focus_mode = Control.FOCUS_NONE
+    rotate_right.pressed.connect(_rotate_build.bind(1))
+    rotate_actions.add_child(rotate_right)
     controls.visible = false
     build_confirm_button.set_meta("placement_controls", controls)
+
+func _rotate_build(direction: int) -> void:
+    if selected_build_kind.is_empty():
+        return
+    build_rotation_target += float(direction) * PI / 4.0
+    if build_tip != null:
+        build_tip.text = "Поворот: %d° — выбери место и нажми ПОСТРОИТЬ" % posmod(int(round(rad_to_deg(build_rotation_target))), 360)
 
 func _build_radius(kind: String) -> float:
     return 1.6 if kind == "shelter" else 1.0
@@ -1437,6 +1551,8 @@ func _start_build_placement(kind: String) -> void:
         return
     _cancel_build_placement()
     selected_build_kind = kind
+    build_rotation_target = 0.0
+    build_rotation_current = 0.0
     craft_panel.visible = false
     _release_gameplay_touches()
     if modal_shield != null:
@@ -1462,6 +1578,17 @@ func _start_build_placement(kind: String) -> void:
     mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
     marker.material_override = mat
     build_preview.add_child(marker)
+    # Полупрозрачный силуэт позволяет видеть направление постройки до установки.
+    var preview_color := Color(0.35, 0.85, 0.70, 0.48)
+    if kind == "storage":
+        _mesh_box(build_preview, Vector3(1.9, 1.05, 1.25), Vector3(0, 0.55, 0), preview_color)
+    elif kind == "shelter":
+        _mesh_box(build_preview, Vector3(3.65, 0.25, 3.25), Vector3(0, 2.55, 0), preview_color)
+        for x in [-1.55, 1.55]:
+            for z in [-1.3, 1.3]:
+                _mesh_box(build_preview, Vector3(0.24, 2.45, 0.24), Vector3(x, 1.23, z), preview_color)
+    else:
+        _mesh_box(build_preview, Vector3(1.6, 0.22, 0.5), Vector3(0, 0.22, 0), preview_color)
     build_preview.visible = false
     _update_ui()
 
@@ -1495,6 +1622,8 @@ func _cancel_build_placement() -> void:
     selected_build_kind = ""
     build_preview_valid = false
     build_preview_has_target = false
+    build_rotation_target = 0.0
+    build_rotation_current = 0.0
     if build_preview != null:
         build_preview.queue_free()
         build_preview = null
@@ -1525,6 +1654,7 @@ func _confirm_build_placement() -> void:
     var build_radius: float = radius
     var building := Node3D.new()
     building.position = Vector3(chosen.x, 0, chosen.y)
+    building.rotation.y = build_rotation_target
     add_child(building)
     if kind == "storage":
         _mesh_box(building, Vector3(1.9, 1.05, 1.25), Vector3(0, 0.55, 0), Color("8b643c"))
@@ -1544,7 +1674,7 @@ func _confirm_build_placement() -> void:
                 _mesh_box(building, Vector3(0.24, 2.45, 0.24), Vector3(x, 1.23, z), Color("735136"))
         _mesh_box(building, Vector3(3.65, 0.25, 3.25), Vector3(0, 2.55, 0), Color("6a5236"))
         _mesh_box(building, Vector3(3.2, 0.18, 2.8), Vector3(0, 0.13, 0), Color("97744b"))
-    built_structures.append({"kind": kind, "pos": chosen, "radius": build_radius, "node": building})
+    built_structures.append({"kind": kind, "pos": chosen, "radius": build_radius, "node": building, "contents": {}})
     obstacles.append({"pos": chosen, "radius": build_radius, "node": building})
     var names := {"storage": "Ящик для припасов", "firepit": "Малый костёр", "shelter": "Деревянный навес"}
     status_message = "%s построен в выбранном месте!" % names[kind]
@@ -1558,6 +1688,7 @@ func _toggle_craft() -> void:
     craft_panel.visible = not craft_panel.visible
     if craft_panel.visible:
         _release_gameplay_touches()
+        storage_panel.visible = false
         action_menu.visible = false
         bag_panel.visible = false
         sleep_panel.visible = false
@@ -1709,6 +1840,7 @@ func _toggle_bag() -> void:
     bag_panel.visible = not bag_panel.visible
     if bag_panel.visible:
         _release_gameplay_touches()
+        storage_panel.visible = false
         action_menu.visible = false
         craft_panel.visible = false
     if modal_shield != null:
@@ -1914,9 +2046,12 @@ func _open_action_menu() -> void:
         return
     bag_panel.visible = false
     craft_panel.visible = false
+    storage_panel.visible = false
     for child in action_list.get_children():
         child.queue_free()
     action_options.clear()
+    if _nearest_storage_index() >= 0:
+        _add_action_option("Открыть сундук", "storage")
     if int(inventory.get("berry", 0)) > 0:
         _add_action_option("Съесть ягоды", "berry")
     if int(inventory.get("mushroom", 0)) > 0:
@@ -1966,7 +2101,9 @@ func _select_action(id: int) -> void:
         return
     var kind := action_options[id]
     action_menu.visible = false
-    if kind == "craft":
+    if kind == "storage":
+        _open_storage()
+    elif kind == "craft":
         _toggle_craft()
     elif kind == "dig_cache":
         _begin_digging(_nearest_cache())
@@ -1984,12 +2121,15 @@ func _update_nearby_action() -> void:
     nearby_action_kind = ""
     nearby_action_index = -1
     nearby_button.hide()
-    if bag_panel.visible or action_menu.visible or craft_panel.visible or sleep_panel.visible or sleep_in_progress:
+    if bag_panel.visible or action_menu.visible or craft_panel.visible or storage_panel.visible or sleep_panel.visible or sleep_in_progress:
         return
     var here := Vector2(player.global_position.x, player.global_position.z)
     # Палатка — отдельное действие при приближении, как костёр и озеро.
     # Проверяем её первой, чтобы другие ресурсы не скрывали кнопку отдыха.
-    if here.distance_to(TENT_POS) <= 2.8:
+    if _nearest_storage_index() >= 0:
+        nearby_action_kind = "storage"
+        nearby_button.text = "Открыть сундук"
+    elif here.distance_to(TENT_POS) <= 2.8:
         nearby_action_kind = "tent"
         nearby_button.text = "Отдохнуть в палатке"
     elif _nearest_cache() >= 0:
@@ -2051,7 +2191,9 @@ func _perform_nearby_action() -> void:
     # Не прячем и не пересчитываем кнопку перед нажатием.
     var chosen: String = nearby_action_kind
     var selected: int = nearby_action_index
-    if chosen == "tent":
+    if chosen == "storage":
+        _open_storage()
+    elif chosen == "tent":
         var here := Vector2(player.global_position.x, player.global_position.z)
         if here.distance_to(TENT_POS) <= 2.8:
             _show_sleep_panel()
@@ -2268,9 +2410,12 @@ func _blocked(pos: Vector2, radius: float) -> bool:
     return false
 
 func _physics_process(delta: float) -> void:
-    if build_preview != null and build_preview_has_target:
-        # Независимая от FPS плавная интерполяция маркера к точке пальца.
-        build_preview.position = build_preview.position.lerp(build_preview_target, 1.0 - exp(-14.0 * delta))
+    if build_preview != null:
+        # Плавное движение и поворот предварительного просмотра.
+        build_rotation_current = lerp_angle(build_rotation_current, build_rotation_target, 1.0 - exp(-12.0 * delta))
+        build_preview.rotation.y = build_rotation_current
+        if build_preview_has_target:
+            build_preview.position = build_preview.position.lerp(build_preview_target, 1.0 - exp(-14.0 * delta))
     if poison_time > 0.0:
         poison_time = maxf(0.0, poison_time - delta)
         hunger = maxf(0.0, hunger - delta * 0.055)
@@ -2445,7 +2590,7 @@ func _move_animals(delta: float) -> void:
         animals[i] = animal
 
 func _interface_modal_open() -> bool:
-    return (bag_panel != null and bag_panel.visible) or (craft_panel != null and craft_panel.visible) or (action_menu != null and action_menu.visible) or (sleep_panel != null and sleep_panel.visible) or sleep_in_progress
+    return (bag_panel != null and bag_panel.visible) or (craft_panel != null and craft_panel.visible) or (action_menu != null and action_menu.visible) or (storage_panel != null and storage_panel.visible) or (sleep_panel != null and sleep_panel.visible) or sleep_in_progress
 
 func _release_gameplay_touches() -> void:
     joystick_touch = -1
@@ -2469,6 +2614,8 @@ func _input(event: InputEvent) -> void:
             current_scroll = bag_scroll_control
         elif craft_panel != null and craft_panel.visible:
             current_scroll = craft_scroll_control
+        elif storage_panel != null and storage_panel.visible:
+            current_scroll = storage_scroll_control
         if event is InputEventScreenTouch:
             if event.pressed:
                 modal_drag_finger = -1
