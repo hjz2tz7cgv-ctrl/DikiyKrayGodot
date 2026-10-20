@@ -52,6 +52,10 @@ var has_shovel := false
 var shovel_recipe_button: Button
 var build_buttons: Dictionary = {}
 var built_structures: Array[Dictionary] = []
+var storage_selection: OptionButton
+var storage_status: Label
+var storage_contents: Dictionary = {}
+var storage_resource_keys: Array[String] = []
 var caches: Array[Dictionary] = []
 var digging_active := false
 var digging_index := -1
@@ -1139,6 +1143,33 @@ func _create_ui() -> void:
     var test_resources_button := Button.new()
     test_resources_button.text = "ТЕСТ: +100 каждого ресурса"
     test_resources_button.custom_minimum_size.y = 58
+    var storage_title := Label.new()
+    storage_title.text = "СКЛАД — подойди к построенному ящику"
+    storage_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    craft_col.add_child(storage_title)
+    storage_selection = OptionButton.new()
+    for resource_key in inventory.keys():
+        storage_resource_keys.append(str(resource_key))
+        storage_selection.add_item(_item_ru_name(str(resource_key)))
+    storage_selection.item_selected.connect(_refresh_storage_status.unbind(1))
+    craft_col.add_child(storage_selection)
+    storage_status = Label.new()
+    storage_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    craft_col.add_child(storage_status)
+    var deposit_button := Button.new()
+    deposit_button.text = "Положить в ящик: 10 шт."
+    deposit_button.pressed.connect(_transfer_storage.bind(true))
+    craft_col.add_child(deposit_button)
+    var withdraw_button := Button.new()
+    withdraw_button.text = "Забрать из ящика: 10 шт."
+    withdraw_button.pressed.connect(_transfer_storage.bind(false))
+    craft_col.add_child(withdraw_button)
+    var cook_button := Button.new()
+    cook_button.text = "Приготовить мясо на построенном костре (1 мясо + 1 дерево)"
+    cook_button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    cook_button.custom_minimum_size.y = 58
+    cook_button.pressed.connect(_cook_at_built_fire)
+    craft_col.add_child(cook_button)
     test_resources_button.pressed.connect(_give_test_resources)
     craft_layout.add_child(test_resources_button)
     var craft_close := Button.new()
@@ -1288,6 +1319,62 @@ func _give_test_resources() -> void:
     status_message = "Тест: +100 каждого предмета и ресурса"
     _update_ui()
 
+
+func _item_ru_name(kind: String) -> String:
+    var names := {"wood": "Древесина", "stone": "Камень", "berry": "Ягоды", "meat": "Сырое мясо", "hide": "Шкура", "mushroom": "Грибы", "cooked_meat": "Жареное мясо", "iron": "Железо", "silver": "Серебро", "gold": "Золото", "herb": "Трава", "poison_mushroom": "Ядовитые грибы", "bandage": "Повязка", "herbal_tea": "Отвар"}
+    return str(names.get(kind, kind))
+
+func _near_built_structure(kind: String, distance: float = 4.0) -> bool:
+    var here := Vector2(player.global_position.x, player.global_position.z)
+    for building in built_structures:
+        if building["kind"] == kind and here.distance_to(building["pos"]) <= distance:
+            return true
+    return false
+
+func _refresh_storage_status() -> void:
+    if storage_selection == null or storage_status == null:
+        return
+    var selected := storage_selection.selected
+    if selected < 0 or selected >= storage_resource_keys.size():
+        return
+    var kind: String = storage_resource_keys[selected]
+    storage_status.text = "%s: в рюкзаке %d | в ящике %d" % [_item_ru_name(kind), int(inventory.get(kind, 0)), int(storage_contents.get(kind, 0))]
+
+func _transfer_storage(deposit: bool) -> void:
+    if not _near_built_structure("storage"):
+        status_message = "Подойди к построенному ящику (до 4 метров)"
+        _update_ui()
+        return
+    if storage_selection.selected < 0:
+        return
+    var kind: String = storage_resource_keys[storage_selection.selected]
+    var amount := mini(10, int(inventory.get(kind, 0)) if deposit else int(storage_contents.get(kind, 0)))
+    if amount <= 0:
+        status_message = "Нет предметов для перемещения"
+    else:
+        if deposit:
+            inventory[kind] -= amount
+            storage_contents[kind] = int(storage_contents.get(kind, 0)) + amount
+        else:
+            storage_contents[kind] = int(storage_contents.get(kind, 0)) - amount
+            inventory[kind] += amount
+        status_message = "%s: %d × %s" % ["Сложено" if deposit else "Забрано", amount, _item_ru_name(kind)]
+    _update_ui()
+
+func _cook_at_built_fire() -> void:
+    if not _near_built_structure("firepit"):
+        status_message = "Подойди к построенному костру (до 4 метров)"
+    elif cooking_active:
+        status_message = "Мясо уже готовится"
+    elif inventory["meat"] < 1 or inventory["wood"] < 1:
+        status_message = "Нужны 1 мясо и 1 древесина"
+    else:
+        inventory["meat"] -= 1
+        inventory["wood"] -= 1
+        cooking_active = true
+        cooking_elapsed = 0.0
+        status_message = "Мясо готовится 11 секунд"
+    _update_ui()
 
 func _build_structure(kind: String) -> void:
     # Первое строительство: готовая постройка появляется на свободной суше
@@ -1570,6 +1657,7 @@ func _update_ui() -> void:
             bag_note_label.visible = cabin_note_found
     if modal_shield != null:
         modal_shield.visible = _interface_modal_open()
+    _refresh_storage_status()
     if quickbar != null:
         _refresh_quickbar()
     _update_minimap()
