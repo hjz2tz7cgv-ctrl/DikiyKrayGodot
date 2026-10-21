@@ -30,6 +30,14 @@ var campfire_node: Node3D
 var campfire_light: OmniLight3D
 var fire_flames: Array[MeshInstance3D] = []
 var sitting := false
+var shelter_rest_transition := false
+var fishing_active := false
+var fishing_elapsed := 0.0
+var fishing_wait := 0.0
+var has_fishing_rod := false
+var fishing_rod_button: Button
+var fishing_progress: ProgressBar
+var fishing_status: Label
 var camp_time := 0.0
 const COOK_SECONDS := 11.0
 var cooking_active := false
@@ -46,7 +54,7 @@ var resources: Array[Dictionary] = []
 var drops: Array[Dictionary] = []
 var animals: Array[Dictionary] = []
 var scenery: Array[Node3D] = []
-var inventory := {"wood": 0, "stone": 0, "berry": 0, "meat": 0, "hide": 0, "mushroom": 0, "cooked_meat": 0, "iron": 0, "silver": 0, "gold": 0, "herb": 0, "poison_mushroom": 0, "bandage": 0, "herbal_tea": 0}
+var inventory := {"wood": 0, "stone": 0, "berry": 0, "meat": 0, "hide": 0, "mushroom": 0, "cooked_meat": 0, "iron": 0, "silver": 0, "gold": 0, "herb": 0, "poison_mushroom": 0, "bandage": 0, "herbal_tea": 0, "fish": 0}
 var hunger := 100.0
 var thirst := 100.0
 var survival_label: Label
@@ -544,13 +552,66 @@ func _update_body_temperature(delta: float) -> void:
     if body_temperature < 35.5:
         hunger = maxf(0.0, hunger - delta * 0.035)
 
-func _rest_under_shelter() -> void:
-    if not _near_shelter():
-        status_message = "Для отдыха подойди ближе к навесу"
-        _update_ui()
+func _near_fishing_water() -> bool:
+    var here := Vector2(player.position.x, player.position.z)
+    if here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 2.2:
+        return true
+    return _is_stream(here, 2.0)
+
+func _craft_fishing_rod() -> void:
+    if has_fishing_rod:
+        status_message = "Удочка уже изготовлена"
+    elif inventory["wood"] < 4 or inventory["herb"] < 2:
+        status_message = "Нужно 4 древесины и 2 травы"
+    else:
+        inventory["wood"] -= 4
+        inventory["herb"] -= 2
+        has_fishing_rod = true
+        status_message = "Удочка готова! Иди к озеру или реке"
+    _update_ui()
+
+func _start_fishing() -> void:
+    if fishing_active:
+        status_message = "Ждём поклёвки…"
+    elif not has_fishing_rod:
+        status_message = "Сначала изготовь удочку в мастерской"
+    elif not _near_fishing_water():
+        status_message = "Для рыбалки подойди к воде"
+    else:
+        fishing_active = true
+        fishing_elapsed = 0.0
+        fishing_wait = rng.randf_range(7.0, 14.0)
+        status_message = "Удочка заброшена. Ждём поклёвки!"
+    _update_ui()
+
+func _update_fishing(delta: float) -> void:
+    if not fishing_active:
         return
-    sleep_panel.visible = false
-    # Короткий отдых: час игрового времени, немного меньше голод и жажда.
+    fishing_elapsed += delta
+    if fishing_elapsed >= fishing_wait:
+        fishing_active = false
+        if rng.randf() < 0.78:
+            inventory["fish"] += 1
+            status_message = "Поклёвка! Поймана свежая рыба (+1)"
+        else:
+            status_message = "Рыба сорвалась с крючка. Попробуй ещё!"
+        _update_ui()
+
+func _nearest_shelter_position() -> Vector2:
+    var here := Vector2(player.position.x, player.position.z)
+    var best := here
+    var best_distance := 100000.0
+    for building in built_structures:
+        if building["kind"] != "shelter":
+            continue
+        var shelter_pos: Vector2 = building["pos"]
+        var distance := here.distance_to(shelter_pos)
+        if distance < best_distance:
+            best_distance = distance
+            best = shelter_pos
+    return best
+
+func _finish_shelter_rest() -> void:
     day_clock += 1.0
     if day_clock >= 24.0:
         day_clock -= 24.0
@@ -559,9 +620,58 @@ func _rest_under_shelter() -> void:
     thirst = maxf(0.0, thirst - 3.0)
     wetness = maxf(0.0, wetness - 35.0)
     body_temperature = maxf(body_temperature, 36.5)
-    status_message = "Отдохнул под навесом: прошёл час, одежда подсохла"
+    status_message = "Отдохнул на сене под навесом: прошёл час"
     _update_lighting()
     _update_ui()
+
+func _stand_after_shelter_rest(layer: CanvasLayer) -> void:
+    sitting = false
+    player_visual.position.y = 0.0
+    if leg_left != null:
+        leg_left.rotation.x = 0.0
+    if leg_right != null:
+        leg_right.rotation.x = 0.0
+    layer.queue_free()
+    shelter_rest_transition = false
+
+func _rest_under_shelter() -> void:
+    if shelter_rest_transition:
+        return
+    if not _near_shelter():
+        status_message = "Для отдыха подойди ближе к навесу"
+        _update_ui()
+        return
+    sleep_panel.visible = false
+    shelter_rest_transition = true
+    pending_kind = ""
+    pending_index = -1
+    touch_move = Vector2.ZERO
+    hunt_target = -1
+    # Перемещаем персонажа на подстилку в центре ближайшего навеса.
+    var shelter_pos := _nearest_shelter_position()
+    player.position.x = shelter_pos.x
+    player.position.z = shelter_pos.y
+    sitting = true
+    player_visual.position.y = -0.35
+    player_facing = 0.0
+    player_visual.rotation.y = player_facing
+    status_message = "Персонаж сел на сено и отдыхает…"
+    _update_ui()
+    var layer := CanvasLayer.new()
+    layer.layer = 100
+    add_child(layer)
+    var overlay := ColorRect.new()
+    overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    overlay.color = Color(0, 0, 0, 0)
+    overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+    layer.add_child(overlay)
+    var tween := create_tween()
+    tween.tween_interval(0.8)
+    tween.tween_property(overlay, "color:a", 1.0, 1.0)
+    tween.tween_interval(0.55)
+    tween.tween_callback(_finish_shelter_rest)
+    tween.tween_property(overlay, "color:a", 0.0, 1.15)
+    tween.tween_callback(_stand_after_shelter_rest.bind(layer))
 
 func _start_sleep() -> void:
     if sleep_in_progress:
@@ -1148,11 +1258,11 @@ func _create_ui() -> void:
     _add_bag_section(sections, "ЕДА И РАСТЕНИЯ", [
         ["berry", "Ягоды", "●"], ["mushroom", "Грибы", "🍄"],
         ["poison_mushroom", "Яд. гриб", "☠"], ["herb", "Травы", "🌿"],
-        ["meat", "Мясо", "🥩"], ["cooked_meat", "Жареное", "🍖"]])
+        ["meat", "Мясо", "🥩"], ["cooked_meat", "Жареное", "🍖"], ["fish", "Рыба", "🐟"]])
     _add_bag_section(sections, "СНАРЯЖЕНИЕ", [
         ["spear_tool", "Копьё", "⚔"], ["pickaxe_tool", "Кирка", "⛏"],
         ["shovel_tool", "Лопата", "♠"], ["iron_tool", "Инструмент", "⚒"],
-        ["hide", "Шкуры", "▧"]])
+        ["hide", "Шкуры", "▧"], ["fishing_rod_tool", "Удочка", "🎣"]])
     _add_bag_section(sections, "ЛЕЧЕНИЕ И НАХОДКИ", [
         ["bandage", "Повязки", "+"], ["herbal_tea", "Отвары", "♨"],
         ["cache_count", "Тайники", "⌖"]])
@@ -1314,6 +1424,12 @@ func _create_ui() -> void:
         build_button.pressed.connect(_start_build_placement.bind(build_kind))
         craft_col.add_child(build_button)
         build_buttons[build_kind] = build_button
+    fishing_rod_button = Button.new()
+    fishing_rod_button.text = "Удочка\\n4 древесины + 2 травы"
+    fishing_rod_button.custom_minimum_size.y = 66
+    fishing_rod_button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    fishing_rod_button.pressed.connect(_craft_fishing_rod)
+    craft_col.add_child(fishing_rod_button)
     craft_col.add_child(craft_recipe_button)
     pickaxe_recipe_button = Button.new()
     pickaxe_recipe_button.pressed.connect(_craft_pickaxe)
@@ -1522,7 +1638,7 @@ func _toggle_test_rain() -> void:
     _update_ui()
 
 func _item_ru_name(kind: String) -> String:
-    var names := {"wood": "Древесина", "stone": "Камень", "berry": "Ягоды", "meat": "Сырое мясо", "hide": "Шкура", "mushroom": "Грибы", "cooked_meat": "Жареное мясо", "iron": "Железо", "silver": "Серебро", "gold": "Золото", "herb": "Трава", "poison_mushroom": "Ядовитые грибы", "bandage": "Повязка", "herbal_tea": "Отвар"}
+    var names := {"wood": "Древесина", "stone": "Камень", "berry": "Ягоды", "meat": "Сырое мясо", "hide": "Шкура", "mushroom": "Грибы", "cooked_meat": "Жареное мясо", "iron": "Железо", "silver": "Серебро", "gold": "Золото", "herb": "Трава", "poison_mushroom": "Ядовитые грибы", "bandage": "Повязка", "herbal_tea": "Отвар", "fish": "Свежая рыба"}
     return str(names.get(kind, kind))
 
 func _near_built_structure(kind: String, distance: float = 4.0) -> bool:
@@ -2179,7 +2295,7 @@ func _dug_cache_count() -> int:
     return count
 
 func _update_ui() -> void:
-    info_label.text = "ДИКИЙ КРАЙ 3D · ТЕПЛО"
+    info_label.text = "ДИКИЙ КРАЙ 3D · РЫБАЛКА"
     if status_message != last_hint_message:
         last_hint_message = status_message
         _show_center_hint(status_message)
@@ -2197,6 +2313,7 @@ func _update_ui() -> void:
                 "pickaxe_tool": amount = 1 if has_pickaxe else 0
                 "shovel_tool": amount = 1 if has_shovel else 0
                 "iron_tool": amount = 1 if has_iron_tool else 0
+                "fishing_rod_tool": amount = 1 if has_fishing_rod else 0
                 "cache_count": amount = _dug_cache_count()
                 _: amount = int(inventory.get(key, 0))
             var quantity_label: Label = bag_item_counts[key]
@@ -2231,6 +2348,9 @@ func _update_ui() -> void:
             var cost: Array = build_costs[build_kind]
             build_button.text = "%s\\n%d древесины + %d камней" % [build_names[build_kind], cost[0], cost[1]]
             build_button.disabled = inventory["wood"] < cost[0] or inventory["stone"] < cost[1]
+    if fishing_rod_button != null:
+        fishing_rod_button.text = "Удочка уже изготовлена" if has_fishing_rod else "Изготовить удочку\\n4 древесины + 2 травы"
+        fishing_rod_button.disabled = has_fishing_rod or inventory["wood"] < 4 or inventory["herb"] < 2
     if pickaxe_recipe_button != null:
         pickaxe_recipe_button.text = "Кирка уже создана" if has_pickaxe else "Создать кирку\n3 дерева + 2 камня"
         pickaxe_recipe_button.disabled = has_pickaxe or inventory["wood"] < 3 or inventory["stone"] < 2
@@ -2473,6 +2593,12 @@ func _update_nearby_action() -> void:
     elif _near_built_structure("firepit"):
         nearby_action_kind = "built_cook"
         nearby_button.text = "Мясо жарится…" if cooking_active else "Пожарить мясо"
+    elif _near_fishing_water() and has_fishing_rod and not fishing_active:
+        nearby_action_kind = "fishing"
+        nearby_button.text = "Забросить удочку"
+    elif _near_fishing_water() and fishing_active:
+        nearby_action_kind = "fishing"
+        nearby_button.text = "Рыбалка: %.0f сек…" % maxf(0.0, fishing_wait - fishing_elapsed)
     elif here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 1.3:
         nearby_action_kind = "water"
         nearby_button.text = "Набрать воды"
@@ -2543,6 +2669,8 @@ func _perform_nearby_action() -> void:
         sitting = false
         player_visual.position.y = 0.0
         status_message = "Ты встал со скамейки"
+    elif chosen == "fishing":
+        _start_fishing()
     elif chosen == "collect_cooked":
         _collect_cooked_meat()
     elif chosen == "built_cook":
@@ -2762,9 +2890,14 @@ func _physics_process(delta: float) -> void:
         poison_time = maxf(0.0, poison_time - delta)
         hunger = maxf(0.0, hunger - delta * 0.055)
         thirst = maxf(0.0, thirst - delta * 0.075)
+    if shelter_rest_transition:
+        _animate_camp(delta)
+        _update_lighting()
+        return
     if sleep_in_progress:
         _advance_sleep(delta)
         return
+    _update_fishing(delta)
     if cooking_active:
         cooking_elapsed += delta
         cooking_caption.visible = true
@@ -2850,7 +2983,7 @@ func _physics_process(delta: float) -> void:
     direction = direction.limit_length(1.0)
     if _interface_modal_open():
         direction = Vector2.ZERO
-    if sitting and (direction.length() > 0.1 or steering_active):
+    if sitting and not shelter_rest_transition and (direction.length() > 0.1 or steering_active):
         sitting = false
         player_visual.position.y = 0.0
     if sitting:
