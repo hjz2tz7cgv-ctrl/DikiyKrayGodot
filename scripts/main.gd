@@ -579,6 +579,11 @@ func _start_fishing() -> void:
         status_message = "Для рыбалки подойди к воде"
     else:
         fishing_active = true
+        # Остановить прежний автоподход и охоту при забросе.
+        pending_index = -1
+        pending_kind = ""
+        hunt_target = -1
+        touch_move = Vector2.ZERO
         fishing_elapsed = 0.0
         fishing_wait = rng.randf_range(7.0, 14.0)
         status_message = "Удочка заброшена. Ждём поклёвки!"
@@ -2981,6 +2986,13 @@ func _physics_process(delta: float) -> void:
         var keyboard_facing := atan2(-direction.x, -direction.y)
         player_facing = lerp_angle(player_facing, keyboard_facing, 1.0 - exp(-10.0 * delta))
     direction = direction.limit_length(1.0)
+    # Во время ожидания поклёвки персонаж неподвижен, даже при
+    # касании джойстика, клавиатуры или старом автоподходе.
+    if fishing_active:
+        direction = Vector2.ZERO
+        pending_index = -1
+        pending_kind = ""
+        hunt_target = -1
     if _interface_modal_open():
         direction = Vector2.ZERO
     if sitting and not shelter_rest_transition and (direction.length() > 0.1 or steering_active):
