@@ -1454,12 +1454,14 @@ func _show_shelter_rest() -> void:
         return
     _show_sleep_panel()
     if shelter_rain_button != null:
-        shelter_rain_button.visible = raining
+        shelter_rain_button.visible = true
+        shelter_rain_button.disabled = not raining
+        shelter_rain_button.text = "Переждать дождь" if raining else "Переждать дождь (сейчас ясно)"
     # Общая система сна используется и палаткой, и построенным навесом.
     if sleep_panel != null:
         var column: VBoxContainer = sleep_panel.get_child(0)
         var heading: Label = column.get_child(0)
-        heading.text = "ДЕРЕВЯННЫЙ НАВЕС\nОтдохнуть до утра?"
+        heading.text = "ДЕРЕВЯННЫЙ НАВЕС\nВыбери действие:"
     status_message = "Навес: можно поспать или переждать дождь"
     _update_ui()
 
@@ -1468,8 +1470,10 @@ func _wait_out_rain() -> void:
         status_message = "Дождь уже закончился или навес слишком далеко"
         return
     # Дождливый интервал погоды заканчивается на 280-й секунде цикла.
-    weather_clock += 280.0 - fmod(weather_clock, 420.0)
+    weather_clock += maxf(0.0, 280.0 - fmod(weather_clock, 420.0))
     raining = false
+    for drop in rain_drops:
+        drop.visible = false
     wetness = maxf(0.0, wetness - 40.0)
     sleep_panel.visible = false
     if shelter_rain_button != null:
@@ -1641,6 +1645,10 @@ func _cook_at_built_fire() -> void:
         cooking_active = true
         cooking_elapsed = 0.0
         cooking_fire_pos = _nearest_built_fire_position()
+        sitting = false
+        player_visual.position.y = 0.0
+        pending_kind = ""
+        pending_index = -1
         status_message = "Мясо жарится. Можешь заниматься своими делами"
     _update_ui()
 
@@ -2057,7 +2065,7 @@ func _dug_cache_count() -> int:
     return count
 
 func _update_ui() -> void:
-    info_label.text = "ДИКИЙ КРАЙ 3D"
+    info_label.text = "ДИКИЙ КРАЙ 3D · 21.10"
     if status_message != last_hint_message:
         last_hint_message = status_message
         _show_center_hint(status_message)
@@ -2134,7 +2142,6 @@ func _finish_cooking() -> void:
     status_message = "Мясо готово! Вернись к костру и забери его"
     cooking_caption.visible = false
     cooking_display.visible = false
-    progress_bar.visible = false
 
 func _survival_action(kind: String) -> void:
     var here := Vector2(player.position.x, player.position.z)
@@ -2206,7 +2213,11 @@ func _survival_action(kind: String) -> void:
                 cooking_active = true
                 cooking_elapsed = 0.0
                 cooking_fire_pos = FIRE_POS
-                status_message = "Мясо жарится. Можно уйти и вернуться позже"
+                sitting = false
+                player_visual.position.y = 0.0
+                pending_kind = ""
+                pending_index = -1
+                status_message = "Мясо на костре! Можно гулять, потом забрать"
     elif inventory.get(kind, 0) <= 0:
         status_message = "Такой еды пока нет в рюкзаке"
     else:
@@ -2622,6 +2633,9 @@ func _blocked(pos: Vector2, radius: float) -> bool:
 
 func _physics_process(delta: float) -> void:
     _update_weather(delta)
+    if shelter_rain_button != null and shelter_rain_button.visible:
+        shelter_rain_button.disabled = not raining
+        shelter_rain_button.text = "Переждать дождь" if raining else "Переждать дождь (сейчас ясно)"
     if build_preview != null:
         # Плавное движение и поворот предварительного просмотра.
         build_rotation_current = lerp_angle(build_rotation_current, build_rotation_target, 1.0 - exp(-12.0 * delta))
@@ -2720,7 +2734,7 @@ func _physics_process(delta: float) -> void:
     direction = direction.limit_length(1.0)
     if _interface_modal_open():
         direction = Vector2.ZERO
-    if sitting and not cooking_active and (direction.length() > 0.1 or steering_active):
+    if sitting and (direction.length() > 0.1 or steering_active):
         sitting = false
         player_visual.position.y = 0.0
     if sitting:
