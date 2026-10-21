@@ -34,6 +34,11 @@ var camp_time := 0.0
 const COOK_SECONDS := 11.0
 var cooking_active := false
 var cooking_elapsed := 0.0
+var cooked_ready := 0
+var cooking_fire_pos := FIRE_POS
+var cooking_display: ProgressBar
+var cooking_caption: Label
+var shelter_rain_button: Button
 var leg_left: Node3D
 var leg_right: Node3D
 var obstacles: Array[Dictionary] = []
@@ -160,6 +165,14 @@ var time_label: Label
 var sleep_fade: ColorRect
 var sleep_in_progress := false
 var sleep_elapsed := 0.0
+# Лёгкая погода для Web/iPhone: без тяжёлых частиц и шейдеров.
+var weather_clock := 0.0
+var raining := false
+var weather_label: Label
+var rain_drops: Array[MeshInstance3D] = []
+var rain_positions: Array[Vector3] = []
+var wetness := 0.0
+
 
 func _ready() -> void:
     rng.seed = 20261017
@@ -179,6 +192,7 @@ func _ready() -> void:
     _create_buried_caches()
     _create_animals()
     _create_ui()
+    _create_weather()
     _update_lighting()
     _update_ui()
 
@@ -432,11 +446,62 @@ func _update_lighting() -> void:
     var twilight := clampf(sin(phase) * 2.0 + 0.20, 0.0, 1.0)
     if sun_light != null:
         sun_light.rotation_degrees = Vector3(-12.0 - 68.0 * daylight, -35.0 + day_clock * 8.0, 0)
-        sun_light.light_energy = lerpf(0.07, 1.15, daylight)
+        sun_light.light_energy = lerpf(0.07, 1.15, daylight) * (0.62 if raining else 1.0)
     if sky_environment != null:
-        sky_environment.background_color = Color("101c38").lerp(Color("91bfd7"), twilight)
+        sky_environment.background_color = Color("101c38").lerp(Color("91bfd7"), twilight).lerp(Color("657889"), 0.38 if raining else 0.0)
         sky_environment.ambient_light_color = Color("66738e").lerp(Color("e1e9dd"), twilight)
         sky_environment.ambient_light_energy = lerpf(0.27, 0.83, twilight)
+
+func _create_weather() -> void:
+    weather_label = Label.new()
+    weather_label.text = "☀ Ясно"
+    weather_label.position = Vector2(22, 142)
+    weather_label.add_theme_font_size_override("font_size", 17)
+    weather_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    hud.add_child(weather_label)
+    var rain_material := StandardMaterial3D.new()
+    rain_material.albedo_color = Color(0.68, 0.85, 1.0, 0.62)
+    rain_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    rain_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    var drop_mesh := BoxMesh.new()
+    drop_mesh.size = Vector3(0.035, 0.48, 0.035)
+    for i in range(44):
+        var drop := MeshInstance3D.new()
+        drop.mesh = drop_mesh
+        drop.material_override = rain_material
+        drop.visible = false
+        add_child(drop)
+        rain_drops.append(drop)
+        rain_positions.append(Vector3(rng.randf_range(-12.0, 12.0), rng.randf_range(1.0, 11.0), rng.randf_range(-12.0, 12.0)))
+
+func _update_weather(delta: float) -> void:
+    weather_clock += delta
+    # Чередуем погоду: первый дождь начинается примерно через две минуты.
+    var new_raining := fmod(weather_clock, 420.0) >= 120.0 and fmod(weather_clock, 420.0) < 280.0
+    if new_raining != raining:
+        raining = new_raining
+        for drop in rain_drops:
+            drop.visible = raining
+        status_message = "Начался дождь! Навес защищает от промокания" if raining else "Дождь закончился"
+    var sheltered := _near_shelter(2.7) if player != null else false
+    if raining and not sheltered:
+        wetness = minf(100.0, wetness + delta * 0.16)
+    else:
+        wetness = maxf(0.0, wetness - delta * (0.5 if sheltered else 0.12))
+    if weather_label != null:
+        weather_label.text = ("☂ Под навесом" if sheltered and raining else "☔ Дождь" if raining else "☀ Ясно") + "  |  Промокание: %d%%" % int(wetness)
+    if not raining or player == null:
+        return
+    var origin := player.global_position
+    for i in range(rain_drops.size()):
+        var relative: Vector3 = rain_positions[i]
+        relative.y -= delta * 14.0
+        if relative.y < 0.3:
+            relative.y += 11.0
+            relative.x = rng.randf_range(-12.0, 12.0)
+            relative.z = rng.randf_range(-12.0, 12.0)
+        rain_positions[i] = relative
+        rain_drops[i].global_position = origin + relative
 
 func _start_sleep() -> void:
     if sleep_in_progress:
@@ -951,6 +1016,16 @@ func _create_ui() -> void:
     progress_bar.custom_minimum_size.y = 22
     progress_bar.visible = false
     bottom.add_child(progress_bar)
+    cooking_caption = Label.new()
+    cooking_caption.text = "Мясо жарится"
+    cooking_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    cooking_caption.visible = false
+    bottom.add_child(cooking_caption)
+    cooking_display = ProgressBar.new()
+    cooking_display.max_value = 100.0
+    cooking_display.custom_minimum_size.y = 17.0
+    cooking_display.visible = false
+    bottom.add_child(cooking_display)
     # Полноэкранный перехватчик касаний позади окон. Не пропускает ввод в 3D-мир.
     modal_shield = ColorRect.new()
     modal_shield.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1227,6 +1302,12 @@ func _create_ui() -> void:
     sleep_yes.text = "Спать до утра"
     sleep_yes.pressed.connect(_start_sleep)
     sleep_col.add_child(sleep_yes)
+    shelter_rain_button = Button.new()
+    shelter_rain_button.text = "Переждать дождь"
+    shelter_rain_button.custom_minimum_size.y = 48.0
+    shelter_rain_button.pressed.connect(_wait_out_rain)
+    shelter_rain_button.visible = false
+    sleep_col.add_child(shelter_rain_button)
     var sleep_no := Button.new()
     sleep_no.text = "Отмена"
     sleep_no.pressed.connect(func(): sleep_panel.visible = false)
@@ -1372,12 +1453,28 @@ func _show_shelter_rest() -> void:
         _update_ui()
         return
     _show_sleep_panel()
+    if shelter_rain_button != null:
+        shelter_rain_button.visible = raining
     # Общая система сна используется и палаткой, и построенным навесом.
     if sleep_panel != null:
         var column: VBoxContainer = sleep_panel.get_child(0)
         var heading: Label = column.get_child(0)
         heading.text = "ДЕРЕВЯННЫЙ НАВЕС\nОтдохнуть до утра?"
-    status_message = "Навес: можно отдохнуть до утра"
+    status_message = "Навес: можно поспать или переждать дождь"
+    _update_ui()
+
+func _wait_out_rain() -> void:
+    if not _near_shelter() or not raining:
+        status_message = "Дождь уже закончился или навес слишком далеко"
+        return
+    # Дождливый интервал погоды заканчивается на 280-й секунде цикла.
+    weather_clock += 280.0 - fmod(weather_clock, 420.0)
+    raining = false
+    wetness = maxf(0.0, wetness - 40.0)
+    sleep_panel.visible = false
+    if shelter_rain_button != null:
+        shelter_rain_button.visible = false
+    status_message = "Ты переждал дождь под навесом"
     _update_ui()
 
 func _nearest_storage_index(distance: float = 3.7) -> int:
@@ -1506,11 +1603,36 @@ func _transfer_storage(kind: String, deposit: bool, all_items: bool) -> void:
     _update_ui()
     _refresh_storage_status()
 
+func _nearest_built_fire_position() -> Vector2:
+    var here := Vector2(player.global_position.x, player.global_position.z)
+    var result := FIRE_POS
+    var best := INF
+    for building in built_structures:
+        if building["kind"] == "firepit":
+            var d: float = here.distance_to(building["pos"])
+            if d < best:
+                best = d
+                result = building["pos"]
+    return result
+
+func _at_cooking_fire() -> bool:
+    var here := Vector2(player.global_position.x, player.global_position.z)
+    return here.distance_to(cooking_fire_pos) <= 4.0
+
+func _collect_cooked_meat() -> void:
+    if cooked_ready <= 0 or not _at_cooking_fire():
+        status_message = "Подойди к костру, где готовилось мясо"
+        return
+    inventory["cooked_meat"] += cooked_ready
+    status_message = "Забрано жареное мясо: %d" % cooked_ready
+    cooked_ready = 0
+    _update_ui()
+
 func _cook_at_built_fire() -> void:
     if not _near_built_structure("firepit"):
         status_message = "Подойди к построенному костру (до 4 метров)"
-    elif cooking_active:
-        status_message = "Мясо уже готовится"
+    elif cooking_active or cooked_ready > 0:
+        status_message = "Сначала забери готовое мясо"
     elif inventory["meat"] < 1 or inventory["wood"] < 1:
         status_message = "Нужны 1 мясо и 1 древесина"
     else:
@@ -1518,7 +1640,8 @@ func _cook_at_built_fire() -> void:
         inventory["wood"] -= 1
         cooking_active = true
         cooking_elapsed = 0.0
-        status_message = "Мясо готовится 11 секунд"
+        cooking_fire_pos = _nearest_built_fire_position()
+        status_message = "Мясо жарится. Можешь заниматься своими делами"
     _update_ui()
 
 func _create_build_placement_ui(root: Control) -> void:
@@ -2007,8 +2130,10 @@ func _sit_on_bench() -> void:
 func _finish_cooking() -> void:
     cooking_active = false
     cooking_elapsed = 0.0
-    inventory["cooked_meat"] += 1
-    status_message = "Мясо готово! +1 жареное мясо в рюкзаке"
+    cooked_ready += 1
+    status_message = "Мясо готово! Вернись к костру и забери его"
+    cooking_caption.visible = false
+    cooking_display.visible = false
     progress_bar.visible = false
 
 func _survival_action(kind: String) -> void:
@@ -2073,15 +2198,15 @@ func _survival_action(kind: String) -> void:
         elif inventory["meat"] < 1 or inventory["wood"] < 1:
             status_message = "Для жарки нужны 1 мясо и 1 дерево"
         else:
-            if cooking_active:
-                status_message = "Мясо уже жарится у костра"
+            if cooking_active or cooked_ready > 0:
+                status_message = "Сначала забери готовое мясо"
             else:
                 inventory["meat"] -= 1
                 inventory["wood"] -= 1
                 cooking_active = true
                 cooking_elapsed = 0.0
-                _sit_on_bench()
-                status_message = "Жарим мясо 11 секунд — отдыхаем на лавочке"
+                cooking_fire_pos = FIRE_POS
+                status_message = "Мясо жарится. Можно уйти и вернуться позже"
     elif inventory.get(kind, 0) <= 0:
         status_message = "Такой еды пока нет в рюкзаке"
     else:
@@ -2110,6 +2235,8 @@ func _open_action_menu() -> void:
     action_options.clear()
     if _nearest_storage_index() >= 0:
         _add_action_option("Открыть сундук", "storage")
+    if cooked_ready > 0 and _at_cooking_fire():
+        _add_action_option("Забрать жареное мясо", "collect_cooked")
     if _near_shelter():
         _add_action_option("Отдохнуть под навесом", "shelter_rest")
     if int(inventory.get("berry", 0)) > 0:
@@ -2133,7 +2260,9 @@ func _open_action_menu() -> void:
     if Vector2(player.position.x, player.position.z).distance_to(CABIN_POS) <= 4.1:
         _add_action_option("Осмотреть заброшенную хижину", "cabin")
     if Vector2(player.position.x, player.position.z).distance_to(FIRE_POS) <= 3.5:
-        _add_action_option("Пожарить мясо и сесть", "cook")
+        _add_action_option("Пожарить мясо", "cook")
+    elif _near_built_structure("firepit"):
+        _add_action_option("Пожарить мясо", "built_cook")
     if Vector2(player.position.x, player.position.z).distance_to(BENCH_POS) <= 3.0:
         if sitting:
             _add_action_option("Встать со скамейки", "stand")
@@ -2207,12 +2336,18 @@ func _update_nearby_action() -> void:
     elif here.distance_to(CABIN_POS) <= 4.1:
         nearby_action_kind = "cabin"
         nearby_button.text = "Осмотреть заброшенную хижину"
-    elif here.distance_to(BENCH_POS) <= 2.8 and not cooking_active:
+    elif cooked_ready > 0 and _at_cooking_fire():
+        nearby_action_kind = "collect_cooked"
+        nearby_button.text = "Забрать жареное мясо"
+    elif here.distance_to(BENCH_POS) <= 2.8:
         nearby_action_kind = "stand" if sitting else "rest"
         nearby_button.text = "Встать со скамейки" if sitting else "Сесть на скамейку и отдохнуть"
     elif here.distance_to(FIRE_POS) <= 3.2:
         nearby_action_kind = "cook"
-        nearby_button.text = "Мясо жарится…" if cooking_active else "Пожарить мясо и сесть"
+        nearby_button.text = "Мясо жарится…" if cooking_active else "Пожарить мясо"
+    elif _near_built_structure("firepit"):
+        nearby_action_kind = "built_cook"
+        nearby_button.text = "Мясо жарится…" if cooking_active else "Пожарить мясо"
     elif here.distance_to(LAKE_CENTER) <= LAKE_RADIUS + 1.3:
         nearby_action_kind = "water"
         nearby_button.text = "Набрать воды"
@@ -2261,6 +2396,8 @@ func _perform_nearby_action() -> void:
     elif chosen == "shelter_rest":
         _show_shelter_rest()
     elif chosen == "tent":
+        if shelter_rain_button != null:
+            shelter_rain_button.visible = false
         var here := Vector2(player.global_position.x, player.global_position.z)
         if here.distance_to(TENT_POS) <= 2.8:
             _show_sleep_panel()
@@ -2281,6 +2418,10 @@ func _perform_nearby_action() -> void:
         sitting = false
         player_visual.position.y = 0.0
         status_message = "Ты встал со скамейки"
+    elif chosen == "collect_cooked":
+        _collect_cooked_meat()
+    elif chosen == "built_cook":
+        _cook_at_built_fire()
     elif chosen == "cook":
         _survival_action("cook")
     elif chosen == "water":
@@ -2480,6 +2621,7 @@ func _blocked(pos: Vector2, radius: float) -> bool:
     return false
 
 func _physics_process(delta: float) -> void:
+    _update_weather(delta)
     if build_preview != null:
         # Плавное движение и поворот предварительного просмотра.
         build_rotation_current = lerp_angle(build_rotation_current, build_rotation_target, 1.0 - exp(-12.0 * delta))
@@ -2495,8 +2637,9 @@ func _physics_process(delta: float) -> void:
         return
     if cooking_active:
         cooking_elapsed += delta
-        progress_bar.visible = true
-        progress_bar.value = 100.0 * minf(1.0, cooking_elapsed / COOK_SECONDS)
+        cooking_caption.visible = true
+        cooking_display.visible = true
+        cooking_display.value = 100.0 * minf(1.0, cooking_elapsed / COOK_SECONDS)
         if cooking_elapsed >= COOK_SECONDS:
             _finish_cooking()
     if sitting and leg_left != null and leg_right != null:
@@ -2577,8 +2720,6 @@ func _physics_process(delta: float) -> void:
     direction = direction.limit_length(1.0)
     if _interface_modal_open():
         direction = Vector2.ZERO
-    if cooking_active:
-        direction = Vector2.ZERO
     if sitting and not cooking_active and (direction.length() > 0.1 or steering_active):
         sitting = false
         player_visual.position.y = 0.0
@@ -2599,7 +2740,7 @@ func _physics_process(delta: float) -> void:
     player.position.x = current.x
     player.position.z = current.y
     _position_camera(delta)
-    if not _interface_modal_open() and gather_touch != -1 and gather_direction.length() > 0.2 and not mining_active and not cooking_active:
+    if not _interface_modal_open() and gather_touch != -1 and gather_direction.length() > 0.2 and not mining_active:
         var nearest := _nearest_resource()
         if nearest >= 0:
             _begin_mining(nearest)
