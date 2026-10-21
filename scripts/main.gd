@@ -16,6 +16,9 @@ var desired_camera_yaw := 0.0
 var camera_focus := Vector3.ZERO
 var camera_initialized := false
 var camera_follow_yaw := 0.0
+var held_tool_root: Node3D
+var held_tool_models: Dictionary = {}
+var tool_animation_clock := 0.0
 var player_visual: Node3D
 var player_facing := 0.0
 const FIRE_POS := Vector2(-3.0, 4.0)
@@ -196,6 +199,7 @@ func _ready() -> void:
     _create_tent()
     _create_camp()
     _create_player()
+    _create_handheld_tools()
     _create_camera()
     _create_resources()
     _create_ore()
@@ -745,6 +749,70 @@ func _create_player() -> void:
     leg_right.position = Vector3(0.22, -0.34, -0.08)
     _mesh_box(leg_left, Vector3(0.22, 0.63, 0.23), Vector3(0, -0.31, 0), Color("4c7050"))
     _mesh_box(leg_right, Vector3(0.22, 0.63, 0.23), Vector3(0, -0.31, 0), Color("4c7050"))
+
+func _create_handheld_tools() -> void:
+    held_tool_root = Node3D.new()
+    held_tool_root.name = "HandheldTools"
+    player_visual.add_child(held_tool_root)
+    held_tool_root.position = Vector3(0.47, 0.10, -0.37)
+    var wood := Color("8d5b31")
+    var steel := Color("aebbc4")
+    for kind in ["rod", "spear", "pickaxe", "shovel", "axe"]:
+        var model := Node3D.new()
+        model.name = kind
+        model.visible = false
+        held_tool_root.add_child(model)
+        held_tool_models[kind] = model
+        if kind == "rod":
+            _mesh_box(model, Vector3(0.045, 1.55, 0.045), Vector3(0, 0.60, -0.12), Color("b99a62"))
+            _mesh_box(model, Vector3(0.012, 0.6, 0.012), Vector3(0, 1.63, -0.12), Color("dce5e4"))
+            _mesh_sphere(model, 0.07, Vector3(0, 1.33, -0.12), Color("c34836"))
+        elif kind == "spear":
+            _mesh_box(model, Vector3(0.07, 1.7, 0.07), Vector3(0, 0.55, 0), wood)
+            _mesh_box(model, Vector3(0.13, 0.32, 0.10), Vector3(0, 1.56, 0), steel)
+        elif kind == "pickaxe":
+            _mesh_box(model, Vector3(0.09, 0.95, 0.09), Vector3(0, 0.35, 0), wood)
+            _mesh_box(model, Vector3(0.76, 0.14, 0.13), Vector3(0, 0.85, 0), steel)
+        elif kind == "shovel":
+            _mesh_box(model, Vector3(0.08, 1.0, 0.08), Vector3(0, 0.39, 0), wood)
+            _mesh_box(model, Vector3(0.27, 0.38, 0.09), Vector3(0, 1.05, 0), steel)
+        elif kind == "axe":
+            _mesh_box(model, Vector3(0.09, 0.92, 0.09), Vector3(0, 0.34, 0), wood)
+            _mesh_box(model, Vector3(0.37, 0.28, 0.12), Vector3(-0.14, 0.75, 0), steel)
+
+func _update_handheld_tools(delta: float) -> void:
+    if held_tool_root == null:
+        return
+    var kind := ""
+    if fishing_active:
+        kind = "rod"
+    elif digging_active:
+        kind = "shovel"
+    elif mining_active:
+        var ore_kind := ""
+        if target_resource >= 0 and target_resource < resources.size():
+            ore_kind = str(resources[target_resource]["kind"])
+        kind = "axe" if ore_kind == "tree" else "pickaxe" if has_pickaxe and equipped_tool == "pickaxe" else "axe"
+    elif hunt_target >= 0 and has_spear:
+        kind = "spear"
+    elif equipped_tool == "spear" and has_spear:
+        kind = "spear"
+    elif equipped_tool == "pickaxe" and has_pickaxe:
+        kind = "pickaxe"
+    elif equipped_tool == "shovel" and has_shovel:
+        kind = "shovel"
+    for tool_kind in held_tool_models:
+        var model: Node3D = held_tool_models[tool_kind]
+        model.visible = tool_kind == kind
+    tool_animation_clock += delta
+    if kind == "rod":
+        held_tool_root.rotation.x = -0.3 + sin(tool_animation_clock * 2.0) * 0.035
+    elif mining_active or digging_active:
+        held_tool_root.rotation.x = sin(tool_animation_clock * 8.0) * 0.5
+    elif kind == "spear" and hunt_target >= 0:
+        held_tool_root.rotation.x = sin(tool_animation_clock * 7.0) * 0.25
+    else:
+        held_tool_root.rotation.x = 0.0
 
 func _create_camera() -> void:
     camera = Camera3D.new()
@@ -2896,6 +2964,8 @@ func _physics_process(delta: float) -> void:
         hunger = maxf(0.0, hunger - delta * 0.055)
         thirst = maxf(0.0, thirst - delta * 0.075)
     if shelter_rest_transition:
+        if held_tool_root != null:
+            held_tool_root.visible = false
         _animate_camp(delta)
         _update_lighting()
         return
@@ -2903,6 +2973,9 @@ func _physics_process(delta: float) -> void:
         _advance_sleep(delta)
         return
     _update_fishing(delta)
+    if held_tool_root != null:
+        held_tool_root.visible = true
+    _update_handheld_tools(delta)
     if cooking_active:
         cooking_elapsed += delta
         cooking_caption.visible = true
