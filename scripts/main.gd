@@ -167,6 +167,7 @@ var sleep_in_progress := false
 var sleep_elapsed := 0.0
 # Лёгкая погода для Web/iPhone: без тяжёлых частиц и шейдеров.
 var weather_clock := 0.0
+var rain_wait_transition := false
 var raining := false
 var weather_label: Label
 var rain_drops: Array[MeshInstance3D] = []
@@ -1555,20 +1556,44 @@ func _show_shelter_rest() -> void:
     _update_ui()
 
 func _wait_out_rain() -> void:
+    if rain_wait_transition:
+        return
     if not _near_shelter() or not raining:
         status_message = "Дождь уже закончился или навес слишком далеко"
+        _update_ui()
         return
-    # Дождливый интервал погоды заканчивается на 280-й секунде цикла.
-    weather_clock += maxf(0.0, 280.0 - fmod(weather_clock, 420.0))
-    raining = false
-    for drop in rain_drops:
-        drop.visible = false
-    wetness = maxf(0.0, wetness - 40.0)
+    rain_wait_transition = true
     sleep_panel.visible = false
     if shelter_rain_button != null:
         shelter_rain_button.visible = false
-    status_message = "Ты переждал дождь под навесом"
-    _update_ui()
+    # Полностью закрываем экран, затем меняем погоду под чёрным экраном.
+    # Используем отдельный слой поверх HUD, чтобы переход был виден на iPhone.
+    var fade_layer := CanvasLayer.new()
+    fade_layer.layer = 100
+    add_child(fade_layer)
+    var overlay := ColorRect.new()
+    overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    overlay.color = Color(0.0, 0.0, 0.0, 0.0)
+    overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+    fade_layer.add_child(overlay)
+    var tween := create_tween()
+    tween.tween_property(overlay, "color:a", 1.0, 1.0)
+    tween.tween_interval(0.65)
+    tween.tween_callback(func() -> void:
+        # Завершаем текущую дождливую фазу, пока экран чёрный.
+        weather_clock += fposmod(281.0 - fmod(weather_clock, 420.0), 420.0)
+        raining = false
+        for drop in rain_drops:
+            drop.visible = false
+        wetness = maxf(0.0, wetness - 40.0)
+        status_message = "Дождь закончился. Ты переждал его под навесом"
+        _update_ui()
+    )
+    tween.tween_property(overlay, "color:a", 0.0, 1.15)
+    tween.tween_callback(func() -> void:
+        fade_layer.queue_free()
+        rain_wait_transition = false
+    )
 
 func _nearest_storage_index(distance: float = 3.7) -> int:
     var here := Vector2(player.global_position.x, player.global_position.z)
@@ -2721,7 +2746,8 @@ func _blocked(pos: Vector2, radius: float) -> bool:
     return false
 
 func _physics_process(delta: float) -> void:
-    _update_weather(delta)
+    if not rain_wait_transition:
+        _update_weather(delta)
     _update_body_temperature(delta)
     if shelter_rain_button != null and shelter_rain_button.visible:
         shelter_rain_button.disabled = not raining
