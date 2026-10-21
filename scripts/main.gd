@@ -172,6 +172,11 @@ var weather_label: Label
 var rain_drops: Array[MeshInstance3D] = []
 var rain_positions: Array[Vector3] = []
 var wetness := 0.0
+# Новые механики: температура, согревание у костра и короткий отдых.
+var body_temperature := 36.7
+var temperature_label: Label
+var shelter_short_rest_button: Button
+var warmth_hint_cooldown := 0.0
 
 
 func _ready() -> void:
@@ -453,6 +458,11 @@ func _update_lighting() -> void:
         sky_environment.ambient_light_energy = lerpf(0.27, 0.83, twilight)
 
 func _create_weather() -> void:
+    temperature_label = Label.new()
+    temperature_label.position = Vector2(22, 169)
+    temperature_label.add_theme_font_size_override("font_size", 17)
+    temperature_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    hud.add_child(temperature_label)
     weather_label = Label.new()
     weather_label.text = "☀ Ясно"
     weather_label.position = Vector2(22, 142)
@@ -503,6 +513,55 @@ func _update_weather(delta: float) -> void:
         rain_positions[i] = relative
         rain_drops[i].global_position = origin + relative
 
+func _near_warm_fire() -> bool:
+    var here := Vector2(player.global_position.x, player.global_position.z)
+    if here.distance_to(FIRE_POS) <= 5.0:
+        return true
+    return _near_built_structure("firepit", 5.0)
+
+func _update_body_temperature(delta: float) -> void:
+    if player == null:
+        return
+    var warm_fire := _near_warm_fire()
+    var sheltered := _near_shelter(2.7)
+    var target := 36.7
+    if raining and not sheltered:
+        target -= 0.7 + wetness * 0.017
+    elif wetness > 20.0:
+        target -= wetness * 0.009
+    if day_clock < 6.0 or day_clock >= 20.0:
+        target -= 0.4
+    if warm_fire:
+        target = maxf(target, 37.0)
+        wetness = maxf(0.0, wetness - delta * 0.9)
+    body_temperature = move_toward(body_temperature, target, delta * (0.08 if warm_fire else 0.018))
+    if temperature_label != null:
+        var state := "У костра" if warm_fire else "Холодно" if body_temperature < 35.7 else "Норма"
+        temperature_label.text = "Температура: %.1f°C · %s" % [body_temperature, state]
+        temperature_label.modulate = Color("ffb59b") if body_temperature < 35.7 else Color.WHITE
+    # Пока без потери здоровья: холод влияет на расход энергии и воды.
+    if body_temperature < 35.5:
+        hunger = maxf(0.0, hunger - delta * 0.035)
+
+func _rest_under_shelter() -> void:
+    if not _near_shelter():
+        status_message = "Для отдыха подойди ближе к навесу"
+        _update_ui()
+        return
+    sleep_panel.visible = false
+    # Короткий отдых: час игрового времени, немного меньше голод и жажда.
+    day_clock += 1.0
+    if day_clock >= 24.0:
+        day_clock -= 24.0
+        day_count += 1
+    hunger = maxf(0.0, hunger - 2.0)
+    thirst = maxf(0.0, thirst - 3.0)
+    wetness = maxf(0.0, wetness - 35.0)
+    body_temperature = maxf(body_temperature, 36.5)
+    status_message = "Отдохнул под навесом: прошёл час, одежда подсохла"
+    _update_lighting()
+    _update_ui()
+
 func _start_sleep() -> void:
     if sleep_in_progress:
         return
@@ -535,6 +594,10 @@ func _advance_sleep(delta: float) -> void:
         _update_ui()
 
 func _show_sleep_panel() -> void:
+    if shelter_short_rest_button != null:
+        shelter_short_rest_button.visible = false
+    if shelter_rain_button != null:
+        shelter_rain_button.visible = false
     pending_kind = ""
     pending_index = -1
     sleep_panel.visible = true
@@ -1278,6 +1341,12 @@ func _create_ui() -> void:
     test_resources_button.custom_minimum_size.y = 58
     test_resources_button.pressed.connect(_give_test_resources)
     craft_layout.add_child(test_resources_button)
+    # Временный переключатель погоды для тестирования дождя и навеса.
+    var test_rain_button := Button.new()
+    test_rain_button.text = "ТЕСТ ПОГОДЫ: дождь / ясно"
+    test_rain_button.custom_minimum_size.y = 58
+    test_rain_button.pressed.connect(_toggle_test_rain)
+    craft_layout.add_child(test_rain_button)
     var craft_close := Button.new()
     craft_close.text = "Закрыть"
     craft_close.custom_minimum_size.y = 48
@@ -1308,6 +1377,12 @@ func _create_ui() -> void:
     shelter_rain_button.pressed.connect(_wait_out_rain)
     shelter_rain_button.visible = false
     sleep_col.add_child(shelter_rain_button)
+    shelter_short_rest_button = Button.new()
+    shelter_short_rest_button.text = "Отдохнуть 1 час"
+    shelter_short_rest_button.custom_minimum_size.y = 48.0
+    shelter_short_rest_button.pressed.connect(_rest_under_shelter)
+    shelter_short_rest_button.visible = false
+    sleep_col.add_child(shelter_short_rest_button)
     var sleep_no := Button.new()
     sleep_no.text = "Отмена"
     sleep_no.pressed.connect(func(): sleep_panel.visible = false)
@@ -1433,6 +1508,18 @@ func _give_test_resources() -> void:
     _update_ui()
 
 
+func _toggle_test_rain() -> void:
+    # Подставляем фазу существующего погодного цикла, не создавая
+    # отдельной погоды. Следующее переключение снова произойдёт естественно.
+    var phase: float = fmod(weather_clock, 420.0)
+    if raining:
+        weather_clock += fposmod(281.0 - phase, 420.0)
+    else:
+        weather_clock += fposmod(121.0 - phase, 420.0)
+    _update_weather(0.0)
+    _update_lighting()
+    _update_ui()
+
 func _item_ru_name(kind: String) -> String:
     var names := {"wood": "Древесина", "stone": "Камень", "berry": "Ягоды", "meat": "Сырое мясо", "hide": "Шкура", "mushroom": "Грибы", "cooked_meat": "Жареное мясо", "iron": "Железо", "silver": "Серебро", "gold": "Золото", "herb": "Трава", "poison_mushroom": "Ядовитые грибы", "bandage": "Повязка", "herbal_tea": "Отвар"}
     return str(names.get(kind, kind))
@@ -1453,6 +1540,8 @@ func _show_shelter_rest() -> void:
         _update_ui()
         return
     _show_sleep_panel()
+    if shelter_short_rest_button != null:
+        shelter_short_rest_button.visible = true
     if shelter_rain_button != null:
         shelter_rain_button.visible = true
         shelter_rain_button.disabled = not raining
@@ -2065,7 +2154,7 @@ func _dug_cache_count() -> int:
     return count
 
 func _update_ui() -> void:
-    info_label.text = "ДИКИЙ КРАЙ 3D · 21.10"
+    info_label.text = "ДИКИЙ КРАЙ 3D · ТЕПЛО"
     if status_message != last_hint_message:
         last_hint_message = status_message
         _show_center_hint(status_message)
@@ -2633,6 +2722,7 @@ func _blocked(pos: Vector2, radius: float) -> bool:
 
 func _physics_process(delta: float) -> void:
     _update_weather(delta)
+    _update_body_temperature(delta)
     if shelter_rain_button != null and shelter_rain_button.visible:
         shelter_rain_button.disabled = not raining
         shelter_rain_button.text = "Переждать дождь" if raining else "Переждать дождь (сейчас ясно)"
