@@ -1363,6 +1363,23 @@ func _near_built_structure(kind: String, distance: float = 4.0) -> bool:
             return true
     return false
 
+func _near_shelter(distance: float = 3.8) -> bool:
+    return _near_built_structure("shelter", distance)
+
+func _show_shelter_rest() -> void:
+    if not _near_shelter():
+        status_message = "Подойди ближе к деревянному навесу"
+        _update_ui()
+        return
+    _show_sleep_panel()
+    # Общая система сна используется и палаткой, и построенным навесом.
+    if sleep_panel != null:
+        var column: VBoxContainer = sleep_panel.get_child(0)
+        var heading: Label = column.get_child(0)
+        heading.text = "ДЕРЕВЯННЫЙ НАВЕС\nОтдохнуть до утра?"
+    status_message = "Навес: можно отдохнуть до утра"
+    _update_ui()
+
 func _nearest_storage_index(distance: float = 3.7) -> int:
     var here := Vector2(player.global_position.x, player.global_position.z)
     var nearest := -1
@@ -1610,6 +1627,7 @@ func _start_build_placement(kind: String) -> void:
         for x in [-1.55, 1.55]:
             for z in [-1.3, 1.3]:
                 _mesh_box(build_preview, Vector3(0.24, 2.45, 0.24), Vector3(x, 1.23, z), preview_color)
+        _mesh_box(build_preview, Vector3(2.25, 0.22, 1.48), Vector3(0, 0.35, 0.12), Color(0.85, 0.70, 0.37, 0.60))
     else:
         _mesh_box(build_preview, Vector3(1.6, 0.22, 0.5), Vector3(0, 0.22, 0), preview_color)
     build_preview.visible = false
@@ -1655,6 +1673,23 @@ func _cancel_build_placement() -> void:
         var controls: Control = build_confirm_button.get_meta("placement_controls")
         controls.visible = false
 
+func _add_shelter_hay(parent: Node3D) -> void:
+    # Соломенная подстилка на деревянном настиле; вращается вместе с навесом.
+    _mesh_box(parent, Vector3(2.25, 0.13, 1.48), Vector3(0.0, 0.28, 0.12), Color("a78943"))
+    for i in range(15):
+        var row: int = i / 5
+        var col: int = i % 5
+        var x: float = -0.88 + float(col) * 0.44
+        var z: float = -0.37 + float(row) * 0.43
+        var straw := _mesh_sphere(parent, 0.28, Vector3(x, 0.39, z), Color("c8a85b") if (i + row) % 2 == 0 else Color("d8bc72"), Vector3(1.15, 0.43, 0.70))
+        straw.rotation.y = float(i % 3) * 0.35
+    # Сверху несколько небольших пучков сухой травы.
+    for i in range(7):
+        var x: float = -0.92 + float(i % 4) * 0.59
+        var z: float = -0.28 + float(i / 4) * 0.73
+        var tuft := _mesh_box(parent, Vector3(0.43, 0.035, 0.08), Vector3(x, 0.53, z), Color("e3c87e"))
+        tuft.rotation.y = float(i) * 0.37
+
 func _confirm_build_placement() -> void:
     if selected_build_kind.is_empty() or not build_preview_valid or build_preview == null:
         return
@@ -1697,6 +1732,7 @@ func _confirm_build_placement() -> void:
                 _mesh_box(building, Vector3(0.24, 2.45, 0.24), Vector3(x, 1.23, z), Color("735136"))
         _mesh_box(building, Vector3(3.65, 0.25, 3.25), Vector3(0, 2.55, 0), Color("6a5236"))
         _mesh_box(building, Vector3(3.2, 0.18, 2.8), Vector3(0, 0.13, 0), Color("97744b"))
+        _add_shelter_hay(building)
     built_structures.append({"kind": kind, "pos": chosen, "radius": build_radius, "node": building, "contents": {}})
     obstacles.append({"pos": chosen, "radius": build_radius, "node": building})
     var names := {"storage": "Ящик для припасов", "firepit": "Малый костёр", "shelter": "Деревянный навес"}
@@ -2074,6 +2110,8 @@ func _open_action_menu() -> void:
     action_options.clear()
     if _nearest_storage_index() >= 0:
         _add_action_option("Открыть сундук", "storage")
+    if _near_shelter():
+        _add_action_option("Отдохнуть под навесом", "shelter_rest")
     if int(inventory.get("berry", 0)) > 0:
         _add_action_option("Съесть ягоды", "berry")
     if int(inventory.get("mushroom", 0)) > 0:
@@ -2125,6 +2163,8 @@ func _select_action(id: int) -> void:
     action_menu.visible = false
     if kind == "storage":
         _open_storage()
+    elif kind == "shelter_rest":
+        _show_shelter_rest()
     elif kind == "craft":
         _toggle_craft()
     elif kind == "dig_cache":
@@ -2151,6 +2191,9 @@ func _update_nearby_action() -> void:
     if _nearest_storage_index() >= 0:
         nearby_action_kind = "storage"
         nearby_button.text = "Открыть сундук"
+    elif _near_shelter():
+        nearby_action_kind = "shelter_rest"
+        nearby_button.text = "Отдохнуть под навесом"
     elif here.distance_to(TENT_POS) <= 2.8:
         nearby_action_kind = "tent"
         nearby_button.text = "Отдохнуть в палатке"
@@ -2215,10 +2258,15 @@ func _perform_nearby_action() -> void:
     var selected: int = nearby_action_index
     if chosen == "storage":
         _open_storage()
+    elif chosen == "shelter_rest":
+        _show_shelter_rest()
     elif chosen == "tent":
         var here := Vector2(player.global_position.x, player.global_position.z)
         if here.distance_to(TENT_POS) <= 2.8:
             _show_sleep_panel()
+            var sleep_column: VBoxContainer = sleep_panel.get_child(0)
+            var sleep_heading: Label = sleep_column.get_child(0)
+            sleep_heading.text = "ПАЛАТКА\nОтдохнуть до утра?"
         else:
             status_message = "Подойди ближе к палатке"
     elif chosen == "dig_cache":
