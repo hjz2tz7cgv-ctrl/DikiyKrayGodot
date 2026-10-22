@@ -229,6 +229,7 @@ func _ready() -> void:
     _create_buried_caches()
     _create_animals()
     _load_tool_layout()
+    _load_game_state()
     _create_ui()
     _create_weather()
     _update_lighting()
@@ -283,6 +284,106 @@ func _load_tool_layout() -> void:
             if valid.has(id) and not used.has(id):
                 stored_tools.append(id)
                 used.append(id)
+
+# Сохранение прогресса в user://. В Web-экспорте Godot использует
+# браузерное хранилище; приватный режим/очистка данных может удалить его.
+const GAME_SAVE_PATH := "user://dikiy_kray_progress_v1.json"
+var _save_timer := 0.0
+
+func _save_game_state() -> void:
+    if player == null:
+        return
+    var data := {
+        "version": 1,
+        "player_position": [player.position.x, player.position.y, player.position.z],
+        "inventory": inventory.duplicate(true),
+        "hunger": hunger,
+        "thirst": thirst,
+        "day_clock": day_clock,
+        "day_count": day_count,
+        "body_temperature": body_temperature,
+        "water_portions": water_portions,
+        "wetness": wetness,
+        "poison_time": poison_time,
+        "cabin_searched": cabin_searched,
+        "cabin_note_found": cabin_note_found,
+        "logger_searched": logger_searched,
+        "cooked_ready": cooked_ready,
+        "fish_cooked_ready": fish_cooked_ready,
+        "has_spear": has_spear,
+        "has_pickaxe": has_pickaxe,
+        "has_shovel": has_shovel,
+        "has_fishing_rod": has_fishing_rod,
+        "has_iron_tool": has_iron_tool,
+        "quick_slots": quick_slots.duplicate(),
+        "stored_tools": stored_tools.duplicate()
+    }
+    var file := FileAccess.open(GAME_SAVE_PATH, FileAccess.WRITE)
+    if file != null:
+        file.store_string(JSON.stringify(data))
+        file.flush()
+    _save_tool_layout()
+
+func _load_game_state() -> void:
+    if not FileAccess.file_exists(GAME_SAVE_PATH):
+        return
+    var file := FileAccess.open(GAME_SAVE_PATH, FileAccess.READ)
+    if file == null:
+        return
+    var parsed: Variant = JSON.parse_string(file.get_as_text())
+    if not (parsed is Dictionary):
+        return
+    var data: Dictionary = parsed
+    var position_data: Variant = data.get("player_position", [])
+    if position_data is Array and position_data.size() == 3 and player != null:
+        var x := float(position_data[0])
+        var y := float(position_data[1])
+        var z := float(position_data[2])
+        if absf(x) <= WORLD_LIMIT and absf(z) <= WORLD_LIMIT and absf(y) < 100.0:
+            player.position = Vector3(x, y, z)
+    var saved_inventory: Variant = data.get("inventory", {})
+    if saved_inventory is Dictionary:
+        for key in inventory.keys():
+            inventory[key] = maxi(0, int(saved_inventory.get(key, inventory[key])))
+    hunger = clampf(float(data.get("hunger", hunger)), 0.0, 100.0)
+    thirst = clampf(float(data.get("thirst", thirst)), 0.0, 100.0)
+    day_clock = fposmod(float(data.get("day_clock", day_clock)), 24.0)
+    day_count = maxi(1, int(data.get("day_count", day_count)))
+    body_temperature = float(data.get("body_temperature", body_temperature))
+    water_portions = maxi(0, int(data.get("water_portions", water_portions)))
+    wetness = clampf(float(data.get("wetness", wetness)), 0.0, 1.0)
+    poison_time = maxf(0.0, float(data.get("poison_time", poison_time)))
+    cabin_searched = bool(data.get("cabin_searched", cabin_searched))
+    cabin_note_found = bool(data.get("cabin_note_found", cabin_note_found))
+    logger_searched = bool(data.get("logger_searched", logger_searched))
+    cooked_ready = maxi(0, int(data.get("cooked_ready", cooked_ready)))
+    fish_cooked_ready = maxi(0, int(data.get("fish_cooked_ready", fish_cooked_ready)))
+    has_spear = bool(data.get("has_spear", has_spear))
+    has_pickaxe = bool(data.get("has_pickaxe", has_pickaxe))
+    has_shovel = bool(data.get("has_shovel", has_shovel))
+    has_fishing_rod = bool(data.get("has_fishing_rod", has_fishing_rod))
+    has_iron_tool = bool(data.get("has_iron_tool", has_iron_tool))
+    var saved_slots: Variant = data.get("quick_slots", [])
+    var saved_bag: Variant = data.get("stored_tools", [])
+    var valid := ["spear", "pickaxe", "shovel", "rod"]
+    var used: Array[String] = []
+    if saved_slots is Array and saved_slots.size() == 5:
+        for i in range(1, 5):
+            var item := str(saved_slots[i])
+            quick_slots[i] = item if valid.has(item) and not used.has(item) else ""
+            if quick_slots[i] != "":
+                used.append(quick_slots[i])
+    if saved_bag is Array:
+        stored_tools.clear()
+        for value in saved_bag:
+            var item := str(value)
+            if valid.has(item) and not used.has(item):
+                stored_tools.append(item)
+                used.append(item)
+
+func _notification(what: int) -> void:
+    if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED:
+        _save_game_state()
 
 func _material(color: Color) -> StandardMaterial3D:
     var m := StandardMaterial3D.new()
@@ -3219,6 +3320,10 @@ func _blocked(pos: Vector2, radius: float) -> bool:
     return false
 
 func _physics_process(delta: float) -> void:
+    _save_timer += delta
+    if _save_timer >= 30.0:
+        _save_timer = 0.0
+        _save_game_state()
     if not rain_wait_transition:
         _update_weather(delta)
     _update_body_temperature(delta)
