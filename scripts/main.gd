@@ -117,6 +117,15 @@ var crossing_z_positions: Array[float] = [-37.0, -7.0, 5.0, 23.0, 43.0]
 var equipped_tool := "hand"
 var quickbar: HBoxContainer
 var quickbar_buttons: Dictionary = {}
+# Пять фиксированных ячеек, первая всегда рука.
+var quick_slots: Array[String] = ["hand", "", "", "", ""]
+var stored_tools: Array[String] = []
+var transfer_source := ""
+var transfer_index := -1
+var bag_tool_grid: GridContainer
+var bag_tool_signature := ""
+const TOOL_LABELS := {"hand":"Рука", "spear":"Копьё", "pickaxe":"Кирка", "shovel":"Лопата", "rod":"Удочка"}
+
 var pickaxe_recipe_button: Button
 var hunt_target := -1
 var attack_cooldown := 0.0
@@ -581,6 +590,7 @@ func _craft_fishing_rod() -> void:
         inventory["wood"] -= 4
         inventory["herb"] -= 2
         has_fishing_rod = true
+        _register_new_tool("rod")
         status_message = "Удочка готова! Иди к озеру или реке"
     _update_ui()
 
@@ -1435,6 +1445,13 @@ func _create_ui() -> void:
         ["berry", "Ягоды", "●"], ["mushroom", "Грибы", "🍄"],
         ["poison_mushroom", "Яд. гриб", "☠"], ["herb", "Травы", "🌿"],
         ["meat", "Мясо", "🥩"], ["cooked_meat", "Жареное", "🍖"], ["fish", "Рыба", "🐟"], ["cooked_fish", "Жареная рыба", "🍽"]])
+    var tools_heading := Label.new()
+    tools_heading.text = "ИНСТРУМЕНТЫ — НАЖМИ НА ПРЕДМЕТ, ЗАТЕМ НА ЯЧЕЙКУ"
+    tools_heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    sections.add_child(tools_heading)
+    bag_tool_grid = GridContainer.new()
+    bag_tool_grid.columns = 4
+    sections.add_child(bag_tool_grid)
     _add_bag_section(sections, "СНАРЯЖЕНИЕ", [
         ["spear_tool", "Копьё", "⚔"], ["pickaxe_tool", "Кирка", "⛏"],
         ["shovel_tool", "Лопата", "♠"], ["iron_tool", "Инструмент", "⚒"],
@@ -1483,7 +1500,7 @@ func _create_ui() -> void:
     quickbar.offset_right = 158.0
     quickbar.offset_top = -99.0
     quickbar.offset_bottom = -48.0
-    for tool_id in ["hand", "spear", "pickaxe", "shovel", "bow"]:
+    for tool_id in ["0", "1", "2", "3", "4"]:
         var tool_button := Button.new()
         tool_button.custom_minimum_size = Vector2(58, 48)
         tool_button.focus_mode = Control.FOCUS_NONE
@@ -2301,6 +2318,8 @@ func _tool_owned(tool_id: String) -> bool:
         return has_pickaxe
     if tool_id == "shovel":
         return has_shovel
+    if tool_id == "rod":
+        return has_fishing_rod
     return false # Меч и лук добавим вместе с их крафтом и механиками.
 
 func _select_quick_tool(tool_id: String) -> void:
@@ -2312,36 +2331,103 @@ func _select_quick_tool(tool_id: String) -> void:
     status_message = "Выбрано: " + {"hand":"Рука", "spear":"Копьё", "pickaxe":"Кирка", "shovel":"Лопата"}.get(tool_id, tool_id)
     _update_ui()
 
-func _refresh_quickbar() -> void:
-    # Только рука видна при старте. Прочие слоты полностью пустые до крафта.
-    # После крафта инструменты занимают свободные ячейки по порядку.
-    var owned_tools: Array[String] = ["hand"]
-    if has_spear:
-        owned_tools.append("spear")
-    if has_pickaxe:
-        owned_tools.append("pickaxe")
-    if has_shovel:
-        owned_tools.append("shovel")
-    var labels := {"hand": "Рука", "spear": "Копьё", "pickaxe": "Кирка", "shovel": "Лопата"}
-    var slot_ids := ["hand", "spear", "pickaxe", "shovel", "bow"]
-    for slot_index in range(slot_ids.size()):
-        var button: Button = quickbar_buttons[slot_ids[slot_index]]
-        if slot_index < owned_tools.size():
-            var tool_id: String = owned_tools[slot_index]
-            button.text = ("● " if equipped_tool == tool_id else "") + ("Жел. кирка" if tool_id == "pickaxe" and has_iron_tool else str(labels[tool_id]))
-            button.disabled = false
-            button.modulate = Color(1.0, 0.94, 0.67) if equipped_tool == tool_id else Color(1, 1, 1)
-            # При заполнении слотов переназначаем действие на нужный инструмент.
-            for connection in button.pressed.get_connections():
-                button.pressed.disconnect(connection["callable"])
-            button.pressed.connect(_select_quick_tool.bind(tool_id))
+func _register_new_tool(tool_id: String) -> void:
+    if quick_slots.has(tool_id) or stored_tools.has(tool_id):
+        return
+    for i in range(1, 5):
+        if quick_slots[i].is_empty():
+            quick_slots[i] = tool_id
+            return
+    stored_tools.append(tool_id)
+
+func _sync_owned_tools() -> void:
+    for tool_id in ["spear", "pickaxe", "shovel", "rod"]:
+        if _tool_owned(tool_id):
+            _register_new_tool(tool_id)
+    if equipped_tool != "hand" and not quick_slots.has(equipped_tool):
+        equipped_tool = "hand"
+
+func _quick_slot_pressed(index: int) -> void:
+    if bag_panel.visible:
+        _transfer_item("quick", index)
+        return
+    var tool_id: String = quick_slots[index]
+    if not tool_id.is_empty():
+        _select_quick_tool(tool_id)
+
+func _bag_tool_pressed(index: int) -> void:
+    _transfer_item("bag", index)
+
+func _transfer_item(kind: String, index: int) -> void:
+    if transfer_source.is_empty():
+        if kind == "quick" and index > 0 and not quick_slots[index].is_empty():
+            transfer_source = kind
+            transfer_index = index
+        elif kind == "bag" and index < stored_tools.size() and not stored_tools[index].is_empty():
+            transfer_source = kind
+            transfer_index = index
+    else:
+        if kind == "quick" and index == 0:
+            transfer_source = ""
+            transfer_index = -1
+            return
+        var moving: String = quick_slots[transfer_index] if transfer_source == "quick" else stored_tools[transfer_index]
+        var displaced: String = quick_slots[index] if kind == "quick" else stored_tools[index]
+        if transfer_source == "quick":
+            quick_slots[transfer_index] = displaced if kind == "quick" else ""
         else:
-            button.text = ""
-            button.tooltip_text = ""
-            for connection in button.pressed.get_connections():
-                button.pressed.disconnect(connection["callable"])
-            button.disabled = true
-            button.modulate = Color(1, 1, 1)
+            stored_tools[transfer_index] = displaced if kind == "bag" else ""
+        if kind == "quick":
+            quick_slots[index] = moving
+        else:
+            if index == stored_tools.size():
+                stored_tools.append(moving)
+            else:
+                stored_tools[index] = moving
+        # Пустые ячейки в рюкзаке убираем после переноса.
+        stored_tools = stored_tools.filter(func(value: String) -> bool: return not value.is_empty())
+        transfer_source = ""
+        transfer_index = -1
+        if not quick_slots.has(equipped_tool):
+            equipped_tool = "hand"
+    _update_ui()
+
+func _refresh_bag_tools() -> void:
+    if bag_tool_grid == null or not bag_panel.visible:
+        return
+    var signature := str(stored_tools) + transfer_source + str(transfer_index)
+    if signature == bag_tool_signature:
+        return
+    bag_tool_signature = signature
+    for child in bag_tool_grid.get_children():
+        bag_tool_grid.remove_child(child)
+        child.queue_free()
+    # Дополнительная пустая ячейка позволяет положить предмет в рюкзак.
+    for i in range(stored_tools.size() + 1):
+        var tool_id: String = stored_tools[i] if i < stored_tools.size() else ""
+        var button := Button.new()
+        button.custom_minimum_size = Vector2(100, 58)
+        button.text = str(TOOL_LABELS.get(tool_id, "＋ Пусто"))
+        if transfer_source == "bag" and transfer_index == i:
+            button.text = "✓ " + button.text
+        button.pressed.connect(_bag_tool_pressed.bind(i))
+        bag_tool_grid.add_child(button)
+
+func _refresh_quickbar() -> void:
+    _sync_owned_tools()
+    for i in range(5):
+        var button: Button = quickbar_buttons[str(i)]
+        var tool_id: String = quick_slots[i]
+        button.text = str(TOOL_LABELS.get(tool_id, ""))
+        if tool_id == "pickaxe" and has_iron_tool:
+            button.text = "Жел. кирка"
+        if transfer_source == "quick" and transfer_index == i:
+            button.text = "✓ " + button.text
+        button.disabled = tool_id.is_empty() and not bag_panel.visible
+        button.modulate = Color(1.0, 0.94, 0.67) if equipped_tool == tool_id and not tool_id.is_empty() else Color.WHITE
+        for connection in button.pressed.get_connections():
+            button.pressed.disconnect(connection["callable"])
+        button.pressed.connect(_quick_slot_pressed.bind(i))
 
 func _craft_spear() -> void:
     if has_spear:
@@ -2350,6 +2436,7 @@ func _craft_spear() -> void:
         inventory["wood"] -= 3
         inventory["stone"] -= 1
         has_spear = true
+        _register_new_tool("spear")
         equipped_tool = "spear"
         status_message = "Деревянное копьё готово! Нажми на животное"
     else:
@@ -2363,6 +2450,7 @@ func _craft_pickaxe() -> void:
         inventory["wood"] -= 3
         inventory["stone"] -= 2
         has_pickaxe = true
+        _register_new_tool("pickaxe")
         equipped_tool = "pickaxe"
         status_message = "Кирка готова! Теперь можно добывать крупные камни"
     else:
@@ -2435,6 +2523,9 @@ func _toggle_bag() -> void:
         _cancel_build_placement()
     bag_panel.visible = not bag_panel.visible
     if bag_panel.visible:
+        bag_tool_signature = ""
+        transfer_source = ""
+        transfer_index = -1
         _release_gameplay_touches()
         storage_panel.visible = false
         action_menu.visible = false
@@ -2482,6 +2573,7 @@ func _update_ui() -> void:
         var minute := int((day_clock - floor(day_clock)) * 60.0)
         time_label.text = "День %d  %02d:%02d" % [day_count, hour, minute]
     if bag_panel.visible:
+        _refresh_bag_tools()
         for key in bag_item_counts.keys():
             var amount := 0
             match str(key):
