@@ -228,10 +228,61 @@ func _ready() -> void:
     _create_logger_camp()
     _create_buried_caches()
     _create_animals()
+    _load_tool_layout()
     _create_ui()
     _create_weather()
     _update_lighting()
     _update_ui()
+
+# Сохраняем раскладку инструментов в user:// (работает и в Web-экспорте).
+const TOOL_SAVE_PATH := "user://dikiy_kray_tools.json"
+
+func _save_tool_layout() -> void:
+    var data := {
+        "version": 1,
+        "quick_slots": quick_slots,
+        "stored_tools": stored_tools,
+        "has_spear": has_spear,
+        "has_pickaxe": has_pickaxe,
+        "has_shovel": has_shovel,
+        "has_fishing_rod": has_fishing_rod,
+        "has_iron_tool": has_iron_tool
+    }
+    var file := FileAccess.open(TOOL_SAVE_PATH, FileAccess.WRITE)
+    if file != null:
+        file.store_string(JSON.stringify(data))
+
+func _load_tool_layout() -> void:
+    if not FileAccess.file_exists(TOOL_SAVE_PATH):
+        return
+    var file := FileAccess.open(TOOL_SAVE_PATH, FileAccess.READ)
+    if file == null:
+        return
+    var parsed: Variant = JSON.parse_string(file.get_as_text())
+    if not (parsed is Dictionary):
+        return
+    var data: Dictionary = parsed
+    has_spear = bool(data.get("has_spear", false))
+    has_pickaxe = bool(data.get("has_pickaxe", false))
+    has_shovel = bool(data.get("has_shovel", false))
+    has_fishing_rod = bool(data.get("has_fishing_rod", false))
+    has_iron_tool = bool(data.get("has_iron_tool", false))
+    var valid := ["spear", "pickaxe", "shovel", "rod"]
+    var used: Array[String] = []
+    var saved_slots: Variant = data.get("quick_slots", [])
+    if saved_slots is Array and saved_slots.size() == 5:
+        for i in range(1, 5):
+            var id := str(saved_slots[i])
+            if valid.has(id) and not used.has(id):
+                quick_slots[i] = id
+                used.append(id)
+    var saved_bag: Variant = data.get("stored_tools", [])
+    if saved_bag is Array:
+        for value in saved_bag:
+            var id := str(value)
+            if valid.has(id) and not used.has(id):
+                stored_tools.append(id)
+                used.append(id)
 
 func _material(color: Color) -> StandardMaterial3D:
     var m := StandardMaterial3D.new()
@@ -1401,8 +1452,8 @@ func _create_ui() -> void:
     var bag_height := minf(550.0, bag_screen.y - 44.0)
     bag_panel.offset_left = -bag_width * 0.5
     bag_panel.offset_right = bag_width * 0.5
-    bag_panel.offset_top = -bag_height * 0.5
-    bag_panel.offset_bottom = bag_height * 0.5
+    bag_panel.offset_top = -bag_height * 0.5 - 43.0
+    bag_panel.offset_bottom = bag_height * 0.5 - 43.0
     bag_panel.mouse_filter = Control.MOUSE_FILTER_STOP
     bag_panel.visible = false
     var bag_col := VBoxContainer.new()
@@ -1420,7 +1471,7 @@ func _create_ui() -> void:
     survival_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     root.add_child(survival_label)
     var bag_title := Label.new()
-    bag_title.text = "🎒  РЮКЗАК"
+    bag_title.text = "РЮКЗАК"
     bag_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     bag_title.add_theme_font_size_override("font_size", 25)
     bag_col.add_child(bag_title)
@@ -1439,28 +1490,28 @@ func _create_ui() -> void:
     bag_scroll_control = bag_scroll
     bag_scroll.add_child(sections)
     _add_bag_section(sections, "МАТЕРИАЛЫ", [
-        ["wood", "Дерево", "🪵"], ["stone", "Камень", "🪨"],
-        ["iron", "Железо", "⛏"], ["silver", "Серебро", "◇"], ["gold", "Золото", "◆"]])
+        ["wood", "Дерево", "ДР"], ["stone", "Камень", "КМ"],
+        ["iron", "Железо", "КР"], ["silver", "Серебро", "◇"], ["gold", "Золото", "◆"]])
     _add_bag_section(sections, "ЕДА И РАСТЕНИЯ", [
-        ["berry", "Ягоды", "●"], ["mushroom", "Грибы", "🍄"],
-        ["poison_mushroom", "Яд. гриб", "☠"], ["herb", "Травы", "🌿"],
-        ["meat", "Мясо", "🥩"], ["cooked_meat", "Жареное", "🍖"], ["fish", "Рыба", "🐟"], ["cooked_fish", "Жареная рыба", "🍽"]])
+        ["berry", "Ягоды", "●"], ["mushroom", "Грибы", "ГР"],
+        ["poison_mushroom", "Яд. гриб", "☠"], ["herb", "Травы", "ТР"],
+        ["meat", "Мясо", "МС"], ["cooked_meat", "Жареное", "ЖМ"], ["fish", "Рыба", "РБ"], ["cooked_fish", "Жареная рыба", "ЖР"]])
     var tools_heading := Label.new()
     tools_heading.text = "ИНСТРУМЕНТЫ — НАЖМИ НА ПРЕДМЕТ, ЗАТЕМ НА ЯЧЕЙКУ"
     tools_heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     sections.add_child(tools_heading)
     bag_tool_grid = GridContainer.new()
-    bag_tool_grid.columns = 4
+    bag_tool_grid.columns = 3
     sections.add_child(bag_tool_grid)
     _add_bag_section(sections, "СНАРЯЖЕНИЕ", [
-        ["spear_tool", "Копьё", "⚔"], ["pickaxe_tool", "Кирка", "⛏"],
-        ["shovel_tool", "Лопата", "♠"], ["iron_tool", "Инструмент", "⚒"],
-        ["hide", "Шкуры", "▧"], ["fishing_rod_tool", "Удочка", "🎣"]])
+        ["spear_tool", "Копьё", "КП"], ["pickaxe_tool", "Кирка", "КР"],
+        ["shovel_tool", "Лопата", "♠"], ["iron_tool", "Инструмент", "ИН"],
+        ["hide", "Шкуры", "▧"], ["fishing_rod_tool", "Удочка", "УД"]])
     _add_bag_section(sections, "ЛЕЧЕНИЕ И НАХОДКИ", [
         ["bandage", "Повязки", "+"], ["herbal_tea", "Отвары", "♨"],
         ["cache_count", "Тайники", "⌖"]])
     bag_note_label = Label.new()
-    bag_note_label.text = "📜 Записка из хижины: «03:17. Кто-то стоял у палатки...»"
+    bag_note_label.text = "Записка из хижины: «03:17. Кто-то стоял у палатки...»"
     bag_note_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     bag_note_label.visible = false
     sections.add_child(bag_note_label)
@@ -2337,8 +2388,10 @@ func _register_new_tool(tool_id: String) -> void:
     for i in range(1, 5):
         if quick_slots[i].is_empty():
             quick_slots[i] = tool_id
+            _save_tool_layout()
             return
     stored_tools.append(tool_id)
+    _save_tool_layout()
 
 func _sync_owned_tools() -> void:
     for tool_id in ["spear", "pickaxe", "shovel", "rod"]:
@@ -2390,6 +2443,7 @@ func _transfer_item(kind: String, index: int) -> void:
         transfer_index = -1
         if not quick_slots.has(equipped_tool):
             equipped_tool = "hand"
+        _save_tool_layout()
     _update_ui()
 
 func _refresh_bag_tools() -> void:
@@ -2406,7 +2460,7 @@ func _refresh_bag_tools() -> void:
     for i in range(stored_tools.size() + 1):
         var tool_id: String = stored_tools[i] if i < stored_tools.size() else ""
         var button := Button.new()
-        button.custom_minimum_size = Vector2(100, 58)
+        button.custom_minimum_size = Vector2(128, 58)
         button.text = str(TOOL_LABELS.get(tool_id, "＋ Пусто"))
         if transfer_source == "bag" and transfer_index == i:
             button.text = "✓ " + button.text
